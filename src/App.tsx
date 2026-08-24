@@ -198,7 +198,7 @@ const DEFAULT_SETTINGS: GameSettings = {
   difficulty: 'normal',
   aiEnabled: true,
   mapTheme: 'random',
-  artStyle: 'isometric',
+  artStyle: 'classic',
 };
 
 const MAP_THEME_DESCRIPTIONS: Record<MapTheme, string> = {
@@ -309,8 +309,8 @@ function SettingsScreen({ onStart }: { onStart: (settings: GameSettings) => void
         <label className="settings-row">
           <span>Art style</span>
           <select value={artStyle} onChange={(event) => setArtStyle(event.target.value as GameSettings['artStyle'])}>
-            <option value="isometric">2.5D view</option>
             <option value="classic">Classic pixel art</option>
+            <option value="isometric">2.5D view</option>
           </select>
         </label>
         {artStyle === 'isometric' && (
@@ -1353,6 +1353,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
             />
             🤖 Players 2+ are AI ({settings.difficulty})
           </label>
+          {!isSetupPhase && <span className="turn-pill">⏱️ Turn {state.turn}</span>}
           <span className="phase-pill">
             {gameOver
               ? 'Game over'

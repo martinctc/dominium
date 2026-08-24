@@ -722,6 +722,28 @@ describe('builders and settlements', () => {
     expect(settlement.hp).toBe(hpBefore + 1);
   });
 
+  it('heals a wounded unit resting near a settlement, just like near the main base', () => {
+    const state = makeStateWithBases();
+    const player = state.players[0];
+    const settlement = {
+      id: 'settlement-heal',
+      ownerId: player.id,
+      kind: 'settlement' as const,
+      position: { x: 4, y: 4 },
+      hp: 18,
+      maxHp: 18,
+    };
+    state.bases.push(settlement);
+    const wounded = makeUnit(player.id, 'footsoldier', { x: 5, y: 4 });
+    wounded.hp = 1;
+    state.units.push(wounded);
+    state.activePlayerIndex = 1;
+
+    applyAction(state, { type: 'endTurn', playerId: state.players[1].id });
+
+    expect(wounded.hp).toBe(2);
+  });
+
   it('lets units be built next to a settlement, far from the main base', () => {
     const { state, player, builder } = makeStateWithBuilder({ x: 5, y: 5 });
     applyAction(state, { type: 'foundSettlement', playerId: player.id, unitId: builder.id });
