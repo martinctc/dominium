@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 🎮 Play Dominium
+    url: https://martinctc.github.io/dominium/
+    about: Try the live game before reporting an issue — make sure it's reproducible on the latest deploy.

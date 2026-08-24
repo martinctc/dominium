@@ -1,0 +1,48 @@
+name: 🐞 Bug report
+description: Something broke, looked wrong, or didn't behave as expected while playing Dominium.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect instead?
+      placeholder: e.g. The hero didn't splash-damage nearby enemies when it arrived at a tile.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Walk through what you did, as precisely as you can.
+      placeholder: |
+        1. Start a 2-player game in 2.5D view
+        2. Build a hero and move it next to an enemy unit
+        3. ...
+    validations:
+      required: false
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Game mode
+      options:
+        - "2.5D view"
+        - "Classic pixel art"
+        - "Not sure"
+    validations:
+      required: false
+  - type: input
+    id: browser
+    attributes:
+      label: Browser / device
+      placeholder: e.g. Chrome on Windows, Safari on iPhone
+    validations:
+      required: false
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot or recording (optional)
+      description: Drag and drop an image or video here if you have one — it really helps.
+    validations:
+      required: false

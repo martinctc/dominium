@@ -1,0 +1,32 @@
+name: 💡 Feature request / feedback
+description: Suggest an improvement, a balance change, or general feedback on Dominium.
+title: "[Feedback]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What would you like to see?
+      description: Describe the change, feature, or piece of feedback.
+      placeholder: e.g. It would be nice if the build picker showed a tooltip explaining unit stats.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why would this help?
+      description: What problem does this solve, or what would make the game more fun/clear?
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area of the game
+      options:
+        - Gameplay / balance
+        - UI / UX
+        - Art / visuals
+        - Performance
+        - Other
+    validations:
+      required: false

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   applyAction,
   canBuildAtPosition,
@@ -10,11 +11,16 @@ import {
   getLegalRoadPositions,
   ROAD_COST,
   SETTLEMENT_COST,
+  SETTLEMENT_MAX_HP,
   TOWER_COST,
+  TOWER_ATTACK,
   TOWER_ATTACK_RANGE,
+  TOWER_MAX_HP,
   towerBlockReason,
   ECONOMY_TYPES,
+  ECONOMY_MAX_HP,
   ECONOMY_YIELD_PER_TURN,
+  ECONOMY_TERRAIN_BONUS,
   economyBlockReason,
   economyCostFor,
   economyLabelFor,
@@ -27,6 +33,7 @@ import {
   getUnitById,
   getVisibleTilesForPlayer,
   UNIT_DEFS,
+  BASE_MAX_HP,
 } from './engine/index.js';
 import type { GameState, Position, UnitType, ResourceKey, MapTheme } from './engine/index.js';
 import {
@@ -53,6 +60,9 @@ import {
   BridgeIcon,
   FlagIcon,
   ChestIcon,
+  MountainIcon,
+  HillsIcon,
+  ForestIcon,
   buildCursorDataUri,
 } from './icons.js';
 import type { TeamKey } from './icons.js';
@@ -198,6 +208,46 @@ const MAP_THEME_DESCRIPTIONS: Record<MapTheme, string> = {
   oasis: 'Mostly open ground with a resource-rich pool at the center everyone wants.',
 };
 
+// Cheap integer hash purely for the decorative start-screen backdrop pattern —
+// unrelated to the game's own board hash, just needs to look stable and varied.
+function backdropHash(x: number, y: number): number {
+  let h = Math.imul(x, 2654435761) + Math.imul(y, 40503);
+  h = Math.imul(h ^ (h >>> 15), 2246822519);
+  return (h ^ (h >>> 13)) >>> 0;
+}
+
+/** A decorative mosaic of terrain tiles behind the settings card — purely visual, not real board state. */
+function SettingsBackdrop() {
+  const cols = 26;
+  const rows = 16;
+  const cells: ReactNode[] = [];
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const roll = backdropHash(x, y) % 100;
+      let background: string;
+      let Overlay: typeof MountainIcon | null = null;
+      if (roll < 8) {
+        background = waterTile(x, y);
+      } else {
+        background = grassTile(x, y);
+        if (roll < 14) Overlay = MountainIcon;
+        else if (roll < 22) Overlay = HillsIcon;
+        else if (roll < 32) Overlay = ForestIcon;
+      }
+      cells.push(
+        <div key={`${x}-${y}`} className="backdrop-tile" style={{ backgroundImage: `url(${background})` }}>
+          {Overlay && <Overlay size={22} />}
+        </div>,
+      );
+    }
+  }
+  return (
+    <div className="settings-backdrop" aria-hidden="true" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
+      {cells}
+    </div>
+  );
+}
+
 function SettingsScreen({ onStart }: { onStart: (settings: GameSettings) => void }) {
   const [playerCount, setPlayerCount] = useState(DEFAULT_SETTINGS.playerCount);
   const [boardSize, setBoardSize] = useState(DEFAULT_SETTINGS.boardSize);
@@ -206,12 +256,25 @@ function SettingsScreen({ onStart }: { onStart: (settings: GameSettings) => void
   const [aiEnabled, setAiEnabled] = useState(DEFAULT_SETTINGS.aiEnabled);
   const [mapTheme, setMapTheme] = useState<MapTheme>(DEFAULT_SETTINGS.mapTheme);
   const [artStyle, setArtStyle] = useState<GameSettings['artStyle']>(DEFAULT_SETTINGS.artStyle);
+  const [showHowToPlay, setShowHowToPlay] = useState(false);
 
   return (
     <div className="settings-screen">
+      <SettingsBackdrop />
       <div className="settings-card">
         <h1>Dominium</h1>
         <p className="hint">Set up your game, then place your bases on the board.</p>
+        <button type="button" className="stats-toggle howtoplay-toggle" onClick={() => setShowHowToPlay(true)}>
+          ❓ How to play
+        </button>
+        <a
+          className="stats-toggle feedback-link"
+          href="https://github.com/martinctc/dominium/issues/new/choose"
+          target="_blank"
+          rel="noreferrer"
+        >
+          🐞 Report a bug / feedback
+        </a>
 
         <label className="settings-row">
           <span>Players</span>
@@ -291,6 +354,7 @@ function SettingsScreen({ onStart }: { onStart: (settings: GameSettings) => void
           Start game
         </button>
       </div>
+      {showHowToPlay && <HowToPlayModal onClose={() => setShowHowToPlay(false)} />}
     </div>
   );
 }
@@ -490,6 +554,181 @@ function StatsPanel({ state, onClose }: { state: GameState; onClose: () => void 
   );
 }
 
+function HowToPlayModal({ onClose }: { onClose: () => void }) {
+  const [page, setPage] = useState<'basics' | 'units' | 'buildings' | 'terrain'>('basics');
+
+  return (
+    <div className="stats-overlay" onClick={onClose}>
+      <div className="stats-panel howtoplay-panel" onClick={(event) => event.stopPropagation()}>
+        <div className="stats-panel-header">
+          <h2>❓ How to play</h2>
+          <button className="stats-close" onClick={onClose} aria-label="Close how to play">✕</button>
+        </div>
+        <div className="stats-tabs" role="tablist" aria-label="How to play pages">
+          {(['basics', 'units', 'buildings', 'terrain'] as const).map((tab) => (
+            <button
+              key={tab}
+              className={page === tab ? 'selected' : ''}
+              onClick={() => setPage(tab)}
+              role="tab"
+              aria-selected={page === tab}
+            >
+              {tab === 'basics' ? 'Basics' : tab === 'units' ? 'Units' : tab === 'buildings' ? 'Buildings' : 'Terrain & fog'}
+            </button>
+          ))}
+        </div>
+
+        {page === 'basics' && (
+          <div className="howtoplay-body">
+            <h3>Objective</h3>
+            <p>
+              Up to 4 players each defend a base on a shared grid. Destroy every other player's base to win —
+              lose yours and you're eliminated. Last base standing wins.
+            </p>
+            <h3>Setup</h3>
+            <p>
+              Each player takes a turn picking a spot for their base before the game begins. Pick somewhere with
+              room to expand and access to resource nodes — you can see your whole starting area from the outset,
+              even though the rest of the map is hidden.
+            </p>
+            <h3>Each turn has 3 phases</h3>
+            <ol className="howtoplay-list">
+              <li><strong>1. Collect income</strong> — choose one resource (food, wood or stone) to gain this turn, plus
+                any guaranteed income from resource nodes and economy buildings you already control.</li>
+              <li><strong>2. Build</strong> — spend resources on a new unit, or use a builder already on the board to
+                found a settlement, raise a sentry tower, build an economy building, or lay a road/bridge.</li>
+              <li><strong>3. Act</strong> — move and/or attack with each of your units (most units can do one or the
+                other; cavalry and the hero can move then attack in the same turn).</li>
+            </ol>
+            <h3>Winning and losing</h3>
+            <p>
+              Losing your <strong>main base</strong> eliminates you immediately. Settlements and other buildings can
+              be destroyed without eliminating you, but losing a settlement removes it as a spawn point. Buildings
+              connected by road back to your base slowly self-repair each turn.
+            </p>
+          </div>
+        )}
+
+        {page === 'units' && (
+          <div className="howtoplay-body">
+            <p className="hint">All costs are paid on top of any resources you already have.</p>
+            <table className="stats-table howtoplay-table">
+              <thead>
+                <tr>
+                  <th>Unit</th>
+                  <th>HP</th>
+                  <th>Move</th>
+                  <th>Attack</th>
+                  <th>Range</th>
+                  <th>Cost (f/w/s)</th>
+                  <th>Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {UNIT_TYPES.map((type) => {
+                  const def = UNIT_DEFS[type];
+                  const Icon = UNIT_ICONS[type];
+                  const notes: string[] = [];
+                  if (def.canMoveThenAttack) notes.push('Can move then attack in the same turn.');
+                  if (def.areaDamage) notes.push(`Splash: hits all enemies within ${def.areaRadius} tile(s) for ${def.areaDamage} on arrival.`);
+                  if (type === 'builder') notes.push('No attack. Founds settlements, raises towers/economy buildings, lays roads.');
+                  return (
+                    <tr key={type}>
+                      <td className="howtoplay-unit-cell"><Icon size={22} /> {UNIT_LABELS[type]}</td>
+                      <td>{def.maxHp}</td>
+                      <td>{def.moveRange}</td>
+                      <td>{def.attack || '—'}</td>
+                      <td>{def.attackRange || '—'}</td>
+                      <td>{def.cost.food}/{def.cost.wood}/{def.cost.stone}</td>
+                      <td>{notes.join(' ') || '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {page === 'buildings' && (
+          <div className="howtoplay-body">
+            <table className="stats-table howtoplay-table">
+              <thead>
+                <tr>
+                  <th>Building</th>
+                  <th>HP</th>
+                  <th>Cost (f/w/s)</th>
+                  <th>What it does</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="howtoplay-unit-cell"><BaseIcon size={22} /> Base</td>
+                  <td>{BASE_MAX_HP}</td>
+                  <td>—</td>
+                  <td>Your main base. Placed at setup. Destroying it eliminates that player.</td>
+                </tr>
+                <tr>
+                  <td className="howtoplay-unit-cell"><SettlementIcon size={22} /> Settlement</td>
+                  <td>{SETTLEMENT_MAX_HP}</td>
+                  <td>{SETTLEMENT_COST.food}/{SETTLEMENT_COST.wood}/{SETTLEMENT_COST.stone}</td>
+                  <td>Founded by a builder, which is consumed in the process. Acts as an extra spot to build new units.</td>
+                </tr>
+                <tr>
+                  <td className="howtoplay-unit-cell"><TowerIcon size={22} /> Sentry tower</td>
+                  <td>{TOWER_MAX_HP}</td>
+                  <td>{TOWER_COST.food}/{TOWER_COST.wood}/{TOWER_COST.stone}</td>
+                  <td>Raised by a builder, who survives. Fires automatically every turn at any enemy within {TOWER_ATTACK_RANGE} tiles for {TOWER_ATTACK} damage.</td>
+                </tr>
+                {(['food', 'wood', 'stone'] as ResourceKey[]).map((resource) => {
+                  const info = ECONOMY_TYPES[resource];
+                  const Icon = ECONOMY_ICON_COMPONENTS[resource];
+                  return (
+                    <tr key={resource}>
+                      <td className="howtoplay-unit-cell"><Icon size={22} /> {info.label[0].toUpperCase()}{info.label.slice(1)}</td>
+                      <td>{ECONOMY_MAX_HP}</td>
+                      <td>{info.cost.food}/{info.cost.wood}/{info.cost.stone}</td>
+                      <td>
+                        Raised by a builder, who survives. Yields {ECONOMY_YIELD_PER_TURN} {resource}/turn (+{ECONOMY_TERRAIN_BONUS} more
+                        on {info.terrain} terrain) every income phase, no choice required.
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <p className="hint">Settlements, towers and economy buildings can't be placed right next to another of the same kind.</p>
+          </div>
+        )}
+
+        {page === 'terrain' && (
+          <div className="howtoplay-body">
+            <h3>Terrain</h3>
+            <ul className="howtoplay-list">
+              <li><strong>Mountains</strong> — impassable to every unit.</li>
+              <li><strong>Lakes</strong> — impassable, unless a bridge has been built across ({ROAD_COST} wood).</li>
+              <li><strong>Hills / forest</strong> — passable, but cost extra movement. Economy buildings placed on their
+                matching terrain (forest for lumber camps, hills for quarries) yield extra resources.</li>
+              <li><strong>Roads</strong> — built by a builder for {ROAD_COST} wood, they speed up movement and let connected buildings self-repair.</li>
+            </ul>
+            <h3>Resource nodes</h3>
+            <p>
+              Scattered food/wood/stone deposits on the map. Move a unit onto an unclaimed node to capture it —
+              some pay out a one-time lump sum ({LUMP_SUM_BONUS} resource), others pay a smaller amount every turn
+              you hold them ({ONGOING_BONUS_PER_TURN}/turn).
+            </p>
+            <h3>Fog of war</h3>
+            <p>
+              Tiles you haven't explored are greyed out — you can't see terrain, units or buildings there. Your
+              starting area is visible from the very first turn. Moving a unit near fogged tiles reveals them for
+              as long as you keep a unit in range.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function VictoryOverlay({
   winner,
   onViewStats,
@@ -541,6 +780,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
   const [aiEnabled, setAiEnabled] = useState(settings.aiEnabled);
   const [unitsBuiltThisTurn, setUnitsBuiltThisTurn] = useState(0);
   const [showStats, setShowStats] = useState(false);
+  const [showHowToPlay, setShowHowToPlay] = useState(false);
   const [draggedUnitType, setDraggedUnitType] = useState<UnitType | null>(null);
   const [dismissedVictory, setDismissedVictory] = useState(false);
 
@@ -1095,6 +1335,15 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
         <h1>Dominium <span className="map-theme-label" title={`Map theme: ${settings.mapTheme}`}>🗺️ {settings.mapTheme}</span></h1>
         <div className="turn-info">
           <button className="stats-toggle" onClick={() => setShowStats(true)}>📊 Stats</button>
+          <button className="stats-toggle" onClick={() => setShowHowToPlay(true)}>❓ How to play</button>
+          <a
+            className="stats-toggle feedback-link"
+            href="https://github.com/martinctc/dominium/issues/new/choose"
+            target="_blank"
+            rel="noreferrer"
+          >
+            🐞 Feedback
+          </a>
           <button className="stats-toggle" onClick={onRestart}>🔁 New game</button>
           <label className="ai-toggle">
             <input
@@ -1819,6 +2068,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
         </div>
       </div>
       {showStats && <StatsPanel state={state} onClose={() => setShowStats(false)} />}
+      {showHowToPlay && <HowToPlayModal onClose={() => setShowHowToPlay(false)} />}
       {showVictoryOverlay && (
         <VictoryOverlay
           winner={winner}
