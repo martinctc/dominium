@@ -1,0 +1,1346 @@
+:root {
+  font-family: Arial, sans-serif;
+  background: #1f2933;
+  color: #e5e7eb;
+  line-height: 1.4;
+  font-weight: 400;
+}
+
+* { box-sizing: border-box; }
+html, body, #root {
+  margin: 0;
+  height: 100%;
+}
+body {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #111827 0%, #1f2933 100%);
+}
+button {
+  font: inherit;
+}
+button:focus-visible,
+.tile:focus-visible {
+  outline: 3px solid #38bdf8;
+  outline-offset: 2px;
+}
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 100vh;
+  padding: 16px;
+  gap: 16px;
+  overflow: hidden;
+}
+.settings-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 16px;
+}
+.settings-card {
+  background: rgba(17, 24, 39, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 12px;
+  padding: 28px 32px;
+  width: min(92vw, 420px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.settings-card h1 {
+  margin: 0;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 600;
+}
+.settings-row select {
+  font: inherit;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(30, 41, 59, 0.9);
+  color: inherit;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+.theme-hint {
+  margin: -8px 0 0;
+  font-weight: 400;
+  font-size: 0.78rem;
+}
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(17, 24, 39, 0.86);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 12px;
+  padding: 10px 18px;
+}
+.top-bar h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.map-theme-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: #94a3b8;
+  background: rgba(30, 41, 59, 0.8);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+.turn-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.phase-pill {
+  background: rgba(30, 41, 59, 0.85);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.9rem;
+}
+.active-player-pill {
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.ai-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  background: rgba(30, 41, 59, 0.85);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.main-row {
+  display: flex;
+  flex: 1;
+  gap: 16px;
+  min-height: 0;
+}
+.hud {
+  width: 340px;
+  background: rgba(17, 24, 39, 0.86);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
+}
+.income-prompt, .unit-picker, .action-hint, .setup-prompt {
+  background: rgba(30, 41, 59, 0.8);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.setup-prompt {
+  border: 1px solid rgba(56, 189, 248, 0.4);
+}
+.chosen-check {
+  color: #4ade80;
+  font-weight: 700;
+  margin-left: 2px;
+}
+.income-confirmed-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #bef264;
+}
+.income-buttons button.selected {
+  background: #2563eb;
+  border-color: #60a5fa;
+}
+.hint {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #94a3b8;
+}
+.unit-picker button,
+.income-buttons button,
+.primary {
+  padding: 8px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: #0f172a;
+  color: #e5e7eb;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.unit-picker button:hover:not(:disabled),
+.income-buttons button:hover:not(:disabled) {
+  border-color: rgba(148, 163, 184, 0.7);
+  background: #1e293b;
+}
+.primary:hover:not(:disabled) {
+  background: #15803d;
+}
+.unit-picker button[draggable="true"] {
+  cursor: grab;
+}
+.unit-picker button[draggable="true"]:active {
+  cursor: grabbing;
+}
+.unit-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.unit-label {
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.income-buttons button {
+  flex-direction: row;
+}
+.unit-picker button.selected {
+  background: #2563eb;
+  border-color: #60a5fa;
+}
+.unit-picker button.unaffordable {
+  opacity: 0.4;
+  filter: grayscale(0.7);
+  cursor: not-allowed;
+}
+.unit-picker button.unaffordable:hover {
+  border-color: inherit;
+  background: inherit;
+}
+.road-picker-button {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: #0f172a;
+  color: #e5e7eb;
+  cursor: pointer;
+  font-weight: 600;
+}
+.road-picker-button:hover:not(:disabled) {
+  border-color: rgba(148, 163, 184, 0.7);
+  background: #1e293b;
+}
+.road-picker-button.selected {
+  background: #92400e;
+  border-color: #f59e0b;
+}
+.road-cost {
+  color: #fbbf24;
+  font-weight: 400;
+}
+.primary {
+  width: 100%;
+  flex-direction: row;
+  background: #16a34a;
+  border-color: #4ade80;
+  font-weight: 700;
+}
+.primary:disabled {
+  background: #374151;
+  border-color: #4b5563;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+/* Saving up is a valid strategy, so this is a nudge, not a blocker. */
+.primary.primary-warn:not(:disabled) {
+  background: #b45309;
+  border-color: #fbbf24;
+}
+.income-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.icon {
+  font-size: 1.1rem;
+  display: inline-flex;
+  align-items: center;
+}
+.phase-pill-icon-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.cost-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.cost-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.log-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+  background: rgba(30, 41, 59, 0.8);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.log-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+.log-count {
+  font-size: 0.7rem;
+  color: #94a3b8;
+}
+.log {
+  /* Full history is kept: the panel scrolls rather than truncating, and sticks
+     to the newest entry unless the player scrolls back. */
+  max-height: 260px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 8px 8px;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
+}
+.log::-webkit-scrollbar {
+  width: 8px;
+}
+.log::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.45);
+  border-radius: 4px;
+}
+.log-turn-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 4px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+.log-turn-header:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+.log-turn-badge {
+  flex: none;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #cbd5e1;
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.log-turn-who {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+.log-line {
+  padding: 2px 0 2px 8px;
+  border-left: 3px solid transparent;
+  color: #cbd5e1;
+  overflow-wrap: anywhere;
+}
+.log-line-owned {
+  border-left-style: solid;
+}
+.settlement-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: #0f172a;
+  color: #e5e7eb;
+  cursor: pointer;
+  font-weight: 600;
+  text-align: left;
+}
+/* Label above cost, each on a single line — the sidebar is too narrow to keep
+   them side by side without the text wrapping mid-phrase. */
+.settlement-button-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.settlement-button-label {
+  white-space: nowrap;
+}
+.settlement-button .road-cost {
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+.settlement-button.ready {
+  border-color: #4ade80;
+  background: #14532d;
+}
+.settlement-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.settlement-blocked {
+  color: #fca5a5;
+}
+.unit-reference {
+  background: rgba(30, 41, 59, 0.8);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.unit-reference > .hint {
+  margin: 0;
+  font-size: 0.7rem;
+}
+.unit-reference-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+.unit-reference-card {
+  min-width: 0;
+  min-height: 58px;
+  padding: 5px 2px;
+  border: 1px solid rgba(71, 85, 105, 0.8);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.55);
+  color: #e2e8f0;
+  cursor: help;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  white-space: nowrap;
+  font-size: 0.7rem;
+}
+.unit-reference-card:hover,
+.unit-reference-card:focus-visible {
+  border-color: #60a5fa;
+  background: rgba(30, 64, 175, 0.35);
+  outline: none;
+}
+.builder-reference {
+  background: rgba(30, 41, 59, 0.8);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.builder-reference > .hint {
+  margin: 0;
+  font-size: 0.7rem;
+}
+.builder-guide-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+.builder-guide-item {
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid rgba(71, 85, 105, 0.8);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.68rem;
+}
+.builder-guide-item span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.builder-guide-item small {
+  color: #94a3b8;
+  line-height: 1.2;
+}
+.board-panel {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  min-height: 0;
+  overflow: auto;
+}
+.board-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  min-height: 0;
+}
+.board {
+  display: grid;
+  gap: 2px;
+  width: min(72vh, 760px);
+  aspect-ratio: 1;
+  background: #374151;
+  padding: 4px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.isometric-board {
+  display: block;
+  position: relative;
+  aspect-ratio: auto;
+  overflow: visible;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  max-width: 100%;
+}
+.tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background-color: #4b5563;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  image-rendering: pixelated;
+  color: #f3f4f6;
+  /* Tiles normally show a pointer, but the board sets a custom cursor (e.g. a
+     unit sprite while placing it) via an inline style on .board — inherit so
+     that carries down onto every tile button instead of being clobbered by
+     this rule's own higher-specificity `cursor: pointer`. */
+  cursor: inherit;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+.tile.plain { background-color: #5b7c62; }
+.tile.lake { background-color: #1d4ed8; }
+.tile.mountain { background-color: #6b7280; }
+.tile.hills { background-color: #7c9a5e; }
+.tile.fogged {
+  background-color: #596273 !important;
+  background-image: none !important;
+  filter: grayscale(0.9);
+}
+.tile.fogged::after {
+  content: none;
+}
+.tile.forest { background-color: #3f7a3f; }
+.tile.reachable { outline: 2px solid #60a5fa; }
+.tile.selected { outline: 3px solid #fbbf24; }
+.tile.hit-flash {
+  animation: hit-flash 0.45s ease-out;
+}
+.tile.hit-flash .unit-icon,
+.tile.hit-flash .base-icon {
+  animation: hit-shake 0.45s ease-out;
+}
+.tile.heal-flash {
+  animation: heal-flash 0.7s ease-out;
+}
+.tile.heal-flash::after {
+  content: '+HP';
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #4ade80;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  animation: heal-float 0.7s ease-out forwards;
+  pointer-events: none;
+}
+.tile.build-valid {
+  outline: 2px dashed #22c55e;
+  box-shadow: inset 0 0 0 999px rgba(34, 197, 94, 0.18);
+}
+.tile.build-invalid {
+  box-shadow: inset 0 0 0 999px rgba(239, 68, 68, 0.12);
+}
+.tile.road-valid {
+  outline: 2px dashed #f59e0b;
+  box-shadow: inset 0 0 0 999px rgba(245, 158, 11, 0.2);
+}
+.tile.road-invalid {
+  box-shadow: inset 0 0 0 999px rgba(239, 68, 68, 0.12);
+}
+.tile.base-valid {
+  outline: 2px dashed #38bdf8;
+  box-shadow: inset 0 0 0 999px rgba(56, 189, 248, 0.2);
+}
+.tile.base-invalid {
+  box-shadow: inset 0 0 0 999px rgba(239, 68, 68, 0.12);
+  cursor: not-allowed;
+}
+.tile.capture-flash {
+  animation: capture-flash 0.7s ease-out;
+}
+@keyframes capture-flash {
+  0% { box-shadow: inset 0 0 0 4px rgba(250, 204, 21, 0); background-color: rgba(250, 204, 21, 0.85); }
+  40% { box-shadow: inset 0 0 0 5px rgba(250, 204, 21, 0.95); }
+  100% { box-shadow: inset 0 0 0 4px rgba(250, 204, 21, 0); }
+}
+@keyframes hit-flash {
+  0% { box-shadow: inset 0 0 0 4px rgba(239, 68, 68, 0); background-color: rgba(239, 68, 68, 0.9); }
+  40% { box-shadow: inset 0 0 0 4px rgba(239, 68, 68, 0.9); }
+  100% { box-shadow: inset 0 0 0 4px rgba(239, 68, 68, 0); }
+}
+@keyframes heal-flash {
+  0% { box-shadow: inset 0 0 0 4px rgba(74, 222, 128, 0); background-color: rgba(74, 222, 128, 0.75); }
+  40% { box-shadow: inset 0 0 0 4px rgba(74, 222, 128, 0.9); }
+  100% { box-shadow: inset 0 0 0 4px rgba(74, 222, 128, 0); }
+}
+@keyframes heal-float {
+  0% { opacity: 0; transform: translate(-50%, 6px); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -16px); }
+}
+.tile.income-flash {
+  animation: income-flash 0.9s ease-out;
+}
+.tile.income-flash::after {
+  content: '+1';
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #fbbf24;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+  animation: heal-float 0.9s ease-out forwards;
+  pointer-events: none;
+  z-index: 4;
+}
+@keyframes income-flash {
+  0% { box-shadow: inset 0 0 0 4px rgba(251, 191, 36, 0); background-color: rgba(251, 191, 36, 0.7); }
+  40% { box-shadow: inset 0 0 0 5px rgba(251, 191, 36, 0.95); }
+  100% { box-shadow: inset 0 0 0 4px rgba(251, 191, 36, 0); }
+}
+@keyframes hit-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px) rotate(-4deg); }
+  40% { transform: translateX(3px) rotate(4deg); }
+  60% { transform: translateX(-2px) rotate(-2deg); }
+  80% { transform: translateX(2px) rotate(2deg); }
+}
+/* ---------------------------------------------------------------------------
+   Isometric tile styling.
+   The classic renderer paints state highlights straight onto the square
+   <button> (outlines, inset box-shadow fills, background colours, flash
+   keyframes). In isometric mode that square is invisible scaffolding sitting
+   behind a diamond, so every one of those effects has to be stripped here and
+   re-drawn on .isometric-top, whose clip-path keeps them diamond-shaped.
+   These rules deliberately live after all the .tile.* rules so they win on
+   both specificity and source order.
+--------------------------------------------------------------------------- */
+.isometric-board .tile {
+  position: absolute;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent !important;
+  background-image: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  animation: none !important;
+  filter: none !important;
+  overflow: visible;
+  /* The square <button> hit-box is ~2x wider than the diamond it draws, so
+     neighbouring tiles overlap and swallow each other's clicks. Route pointer
+     events to the diamond top (and to sprites that stand proud of it) instead;
+     the event still bubbles to the button, so onClick is unchanged. */
+  pointer-events: none;
+}
+.isometric-board .isometric-top {
+  pointer-events: auto;
+}
+.isometric-board .tile::after,
+.isometric-board .tile::before {
+  content: none !important;
+}
+/* ...except the floating "+HP" / income labels, which are still useful. */
+.isometric-board .tile.heal-flash::after,
+.isometric-board .tile.income-flash::after {
+  content: '+HP';
+}
+.isometric-board .tile.income-flash::after {
+  content: '+1';
+}
+.isometric-top,
+.isometric-edge {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.isometric-edge {
+  z-index: 0;
+  background: #263449;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+.isometric-top {
+  z-index: 1;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  background-color: #5b7c62;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  image-rendering: pixelated;
+  transition: box-shadow 120ms ease, filter 120ms ease;
+}
+.isometric-board .tile:hover .isometric-top {
+  filter: brightness(1.18);
+}
+.isometric-top.fogged {
+  background-color: #596273;
+  background-image: none;
+}
+.isometric-board .tile.lake .isometric-top { background-color: #1d4ed8; }
+.isometric-board .tile.mountain .isometric-top { background-color: #6b7280; }
+.isometric-board .tile.hills .isometric-top { background-color: #7c9a5e; }
+.isometric-board .tile.forest .isometric-top { background-color: #3f7a3f; }
+/* Fogged/unexplored tiles must stay a neutral grey no matter what terrain is
+   underneath — otherwise the colour peeking through leaks map information the
+   player hasn't actually scouted yet. This needs to win over the
+   terrain-specific rules above, so it repeats their selector specificity
+   (the "fogged" class lives on the .isometric-top span itself, not the tile). */
+.isometric-top.fogged,
+.isometric-board .tile.lake .isometric-top.fogged,
+.isometric-board .tile.mountain .isometric-top.fogged,
+.isometric-board .tile.hills .isometric-top.fogged,
+.isometric-board .tile.forest .isometric-top.fogged {
+  background-color: #596273;
+  background-image: none;
+}
+
+/* Diamond-clipped replacements for the square outlines / inset fills. */
+.isometric-board .tile.reachable .isometric-top {
+  box-shadow: inset 0 0 0 999px rgba(96, 165, 250, 0.28);
+}
+.isometric-board .tile.build-valid .isometric-top,
+.isometric-board .tile.base-valid .isometric-top {
+  box-shadow: inset 0 0 0 999px rgba(34, 197, 94, 0.28);
+}
+.isometric-board .tile.road-valid .isometric-top {
+  box-shadow: inset 0 0 0 999px rgba(245, 158, 11, 0.3);
+}
+.isometric-board .tile.build-invalid .isometric-top,
+.isometric-board .tile.road-invalid .isometric-top,
+.isometric-board .tile.base-invalid .isometric-top {
+  box-shadow: inset 0 0 0 999px rgba(15, 23, 42, 0.34);
+}
+.isometric-board .tile.selected .isometric-top {
+  box-shadow: inset 0 0 0 999px rgba(251, 191, 36, 0.35);
+  filter: brightness(1.12);
+}
+.isometric-board .tile.hit-flash .isometric-top {
+  animation: iso-flash-red 0.45s ease-out;
+}
+.isometric-board .tile.heal-flash .isometric-top {
+  animation: iso-flash-green 0.7s ease-out;
+}
+.isometric-board .tile.capture-flash .isometric-top,
+.isometric-board .tile.income-flash .isometric-top {
+  animation: iso-flash-gold 0.7s ease-out;
+}
+@keyframes iso-flash-red {
+  0%, 40% { box-shadow: inset 0 0 0 999px rgba(239, 68, 68, 0.85); }
+  100% { box-shadow: inset 0 0 0 999px rgba(239, 68, 68, 0); }
+}
+@keyframes iso-flash-green {
+  0%, 40% { box-shadow: inset 0 0 0 999px rgba(74, 222, 128, 0.75); }
+  100% { box-shadow: inset 0 0 0 999px rgba(74, 222, 128, 0); }
+}
+@keyframes iso-flash-gold {
+  0%, 40% { box-shadow: inset 0 0 0 999px rgba(250, 204, 21, 0.8); }
+  100% { box-shadow: inset 0 0 0 999px rgba(250, 204, 21, 0); }
+}
+
+/* Lift sprites so they stand *on* the diamond rather than floating inside it:
+   anchor each sprite's feet to the tile centre (which is the diamond's centre
+   point) and give it a contact shadow. The floating bordered circle of the
+   classic renderer is replaced by an elliptical team-coloured base plate, which
+   reads as a footprint on the ground plane instead of a sticker in the air. */
+.isometric-board .terrain-overlay,
+.isometric-board .node-icon,
+.isometric-board .unit-icon,
+.isometric-board .base-icon {
+  position: absolute;
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  width: auto;
+  height: auto;
+  border: none;
+  background: none;
+  border-radius: 0;
+  transform: translate(-50%, calc(-100% + var(--iso-lift, 8px)));
+}
+.isometric-board .bridge-overlay {
+  /* A bridge lies flat in the ground plane, so it stays centred. */
+  transform: translate(-50%, -50%);
+}
+/* Isometric solids carry their own headroom above the footprint, so they are
+   anchored by the footprint centre (ISO_ANCHOR_RATIO in IsoStructures.tsx)
+   rather than by their bottom edge. */
+.isometric-board .iso-structure {
+  transform: translate(-50%, -82.6%);
+}
+/* Units are isometric SVGs too, so they take the same anchor as the buildings:
+   the footprint diamond sits 82.6% down the viewBox. */
+.isometric-board .unit-icon {
+  transform: translate(-50%, -82.6%);
+}
+.isometric-board .unit-icon,
+.isometric-board .base-icon {
+  z-index: 2;
+  /* Keep border-color (set inline per owner) resolvable so the footprint
+     ellipse below can `inherit` it, but draw no actual border. */
+  border-style: solid;
+  border-width: 0;
+}
+/* Elliptical footprint, tinted with the owner's colour via the inline
+   border-color the tile already sets. */
+.isometric-board .unit-icon::after,
+.isometric-board .base-icon::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  /* Anchored on the footprint centre, not the bottom edge of a much taller
+     sprite, so the ellipse lands on the piece's own diamond. */
+  top: 82.6%;
+  width: 74%;
+  height: 20%;
+  min-height: 8px;
+  transform: translate(-50%, -50%);
+  border: 2px solid;
+  border-color: inherit;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.5);
+  box-shadow: 0 0 6px rgba(8, 12, 22, 0.55);
+  z-index: -1;
+  /* Only the footprint is clickable. A unit or building is far taller than its
+     tile, so making the whole sprite a hit target would let it swallow clicks
+     meant for the tiles behind it. Clicks on the tall part now fall through to
+     whatever tile is actually there. */
+  pointer-events: auto;
+}
+.isometric-board .terrain-overlay::after,
+.isometric-board .node-icon::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 70%;
+  height: 26%;
+  transform: translate(-50%, 40%);
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.32);
+  z-index: -1;
+}
+.isometric-board .unit-icon svg,
+.isometric-board .base-icon svg,
+.isometric-board .terrain-overlay svg {
+  filter: drop-shadow(1px 2px 0 rgba(8, 12, 22, 0.45));
+}
+.isometric-board .hp {
+  transform: translateY(calc(-2.1 * var(--iso-lift, 8px)));
+}
+.isometric-board .building-badge,
+.isometric-board .node-badge {
+  transform: translateY(calc(-1 * var(--iso-lift, 8px)));
+}
+
+.terrain-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.terrain-overlay img {
+  image-rendering: pixelated;
+}
+.unit-icon, .base-icon {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 82%;
+  height: 82%;
+  border-radius: 50%;
+  border: 3px solid;
+  background: rgba(15, 23, 42, 0.55);
+  font-size: 1.5rem;
+}
+.base-icon {
+  font-size: 1.6rem;
+}
+.unit-icon.exhausted {
+  filter: grayscale(0.85);
+  opacity: 0.55;
+}
+.build-status {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #fbbf24;
+}
+.build-status-done {
+  color: #4ade80;
+}
+.node-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 68%;
+  height: 68%;
+  border-radius: 50%;
+  border: 2px dashed rgba(250, 204, 21, 0.7);
+  background: rgba(15, 23, 42, 0.4);
+  font-size: 1.3rem;
+  position: relative;
+  z-index: 2;
+}
+.node-icon.node-owned {
+  border-style: solid;
+  border-width: 3px;
+}
+/* A node that will change hands at end of turn pulses, so "in progress" is
+   distinguishable from "already mine". */
+.node-icon.node-capturing,
+.node-badge.node-capturing {
+  animation: node-capturing 1.2s ease-in-out infinite;
+}
+@keyframes node-capturing {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.7); }
+  50% { box-shadow: 0 0 0 5px rgba(250, 204, 21, 0); }
+}
+/* Corner marker used when a unit or building occupies the node tile. */
+.node-badge {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px;
+  border-radius: 4px;
+  border: 1.5px dashed rgba(250, 204, 21, 0.85);
+  background: rgba(15, 23, 42, 0.85);
+  z-index: 3;
+  pointer-events: none;
+}
+.node-badge.node-owned {
+  border-style: solid;
+}
+/* Corner marker for a building whose tile is also occupied by a unit — the
+   normal case now that a builder survives the tower or farm it raises. */
+.building-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px;
+  border-radius: 4px;
+  border: 1.5px solid rgba(148, 163, 184, 0.9);
+  background: rgba(15, 23, 42, 0.85);
+  z-index: 3;
+  pointer-events: none;
+}
+/* The bridge sprite spans left-to-right; rotate it when it runs north-south. */
+.bridge-overlay.bridge-vertical {
+  transform: rotate(90deg);
+}
+/* "Home terrain, double yield" chip on the economy build buttons. */
+.economy-bonus {
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: #16a34a;
+  color: #f0fdf4;
+  font-size: 0.6rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.node-capture-pip {
+  position: absolute;
+  bottom: 2px;
+  left: 2px;
+  font-size: 0.6rem;
+  line-height: 1;
+  z-index: 3;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+/* Settlements sit slightly smaller than a main base so the two read apart. */
+.base-icon.settlement-icon {
+  border-style: dashed;
+}
+/* Towers are military, not territorial — a dotted ring reads as "outpost". */
+.base-icon.tower-icon {
+  border-style: dotted;
+}
+/* Economy buildings are the softest target on the board; a thin ring says so. */
+.base-icon.economy-icon {
+  border-style: double;
+}
+.node-flag {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  display: flex;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.7));
+}
+.hp {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  font-size: 0.65rem;
+  background: rgba(15, 23, 42, 0.9);
+  border-radius: 999px;
+  padding: 1px 5px;
+  font-weight: 700;
+}
+.resource-cards {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+.resource-card {
+  width: 190px;
+  border-radius: 10px;
+  border: 2px solid;
+  background: rgba(17, 24, 39, 0.86);
+  overflow: hidden;
+  transition: transform 0.15s ease;
+}
+.resource-card.active {
+  transform: translateY(-4px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+.resource-card-header {
+  padding: 4px 12px;
+  font-weight: 700;
+  color: #0f172a;
+  font-size: 0.9rem;
+}
+.resource-card-body {
+  padding: 6px 10px 4px;
+  font-size: 0.85rem;
+}
+/* One icon row plus two number rows (current total, income/turn), so each
+   resource's icon isn't repeated per row. */
+.resource-row {
+  display: grid;
+  grid-template-columns: 28px repeat(3, 1fr);
+  align-items: center;
+  gap: 4px;
+}
+.resource-row-label {
+  color: #94a3b8;
+  font-size: 0.68rem;
+}
+.resource-row span:not(.resource-row-label) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.resource-row-totals span:not(.resource-row-label) {
+  font-weight: 700;
+}
+.resource-row-income {
+  color: #86efac;
+  font-size: 0.75rem;
+}
+.resource-card-nodes {
+  text-align: center;
+  font-size: 0.75rem;
+  color: #fde68a;
+  padding: 0 8px 6px;
+}
+
+.stats-toggle {
+  font-size: 0.85rem;
+  background: rgba(30, 41, 59, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #e5e7eb;
+  border-radius: 999px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.stats-toggle:hover {
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.stats-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+.victory-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  animation: victory-fade-in 0.3s ease-out;
+}
+.victory-card {
+  background: rgba(17, 24, 39, 0.97);
+  border: 2px solid rgba(148, 163, 184, 0.4);
+  border-radius: 16px;
+  padding: 36px 44px;
+  width: min(92vw, 420px);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: victory-pop-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.victory-card h2 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+.victory-confetti {
+  font-size: 1.6rem;
+  letter-spacing: 4px;
+  animation: victory-bounce 1.2s ease-in-out infinite;
+}
+.victory-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 8px;
+}
+.victory-actions .primary {
+  width: auto;
+  padding: 10px 20px;
+}
+@keyframes victory-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes victory-pop-in {
+  0% { transform: scale(0.85); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes victory-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+.stats-panel {
+  background: rgba(17, 24, 39, 0.96);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 12px;
+  padding: 20px 24px;
+  max-width: 900px;
+  width: min(92vw, 900px);
+  max-height: 86vh;
+  overflow-y: auto;
+  color: #e5e7eb;
+}
+.stats-panel h2, .stats-panel h3 {
+  margin: 0 0 12px;
+}
+.stats-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.stats-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 12px 0 16px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+.stats-tabs button {
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #94a3b8;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.stats-tabs button.selected {
+  border-bottom-color: #60a5fa;
+  color: #e5e7eb;
+}
+.stats-close {
+  background: rgba(30, 41, 59, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #e5e7eb;
+  border-radius: 999px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+}
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+  font-size: 0.9rem;
+}
+.stats-table th, .stats-table td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+.stats-table th {
+  color: #94a3b8;
+  font-weight: 600;
+}
+.stats-player-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.stats-charts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.stats-chart-card {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 8px;
+  padding: 10px;
+  flex: 1 1 320px;
+}
+.stats-chart-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.stats-chart-svg {
+  width: 100%;
+  height: 120px;
+  background: rgba(15, 23, 42, 0.5);
+  border-radius: 6px;
+}
+.stats-line-population {
+  fill: none;
+  stroke: #3b82f6;
+  stroke-width: 2;
+}
+.stats-line-economy {
+  fill: none;
+  stroke: #eab308;
+  stroke-width: 2;
+}
+.stats-chart-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 0.78rem;
+  color: #94a3b8;
+  margin-top: 6px;
+}
+.stats-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
+.stats-legend-population {
+  background: #3b82f6;
+}
+.stats-legend-economy {
+  background: #eab308;
+}
+.stats-elimination-marker line {
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+.stats-elimination-marker text {
+  font-size: 14px;
+  font-weight: 700;
+}
+.stats-battle-log {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 6px;
+  color: #cbd5e1;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .main-row {
+    flex-direction: column;
+  }
+  .hud {
+    width: 100%;
+  }
+  .board {
+    width: min(92vw, 640px);
+  }
+}
+
+@media (max-width: 480px) {
+  .top-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .turn-info {
+    flex-wrap: wrap;
+  }
+  .resource-cards {
+    flex-wrap: wrap;
+  }
+  .resource-card {
+    width: min(45vw, 220px);
+  }
+}
