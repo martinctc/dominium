@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialState, defaultTerrain, generateThemedTerrain, getHomeZoneForPlayer } from '../src/engine/setup.js';
+import {
+  createInitialState,
+  defaultTerrain,
+  generateThemedTerrain,
+  getHomeZoneForPlayer,
+  STARTING_RESOURCE_AMOUNTS,
+} from '../src/engine/setup.js';
 import {
   applyAction,
   canBuildEconomy,
+  canUnitAttack,
   economyBlockReason,
   getLegalBasePositions,
   getLegalBuildPositions,
@@ -71,6 +78,27 @@ function makeStateWithBases() {
 }
 
 describe('grid strategy engine', () => {
+  it.each([
+    ['low', 1],
+    ['normal', 2],
+    ['high', 4],
+    ['deathmatch', 10],
+  ] as const)('assigns %s starting resources to every player', (level, amount) => {
+    const state = createInitialState({
+      width: 10,
+      height: 10,
+      playerCount: 2,
+      terrain: makePlainTerrain(10, 10),
+      startingResources: level,
+    });
+
+    for (const player of state.players) {
+      expect(player.resources).toEqual({ food: amount, wood: amount, stone: amount });
+      expect(player.stats.incomeCollected).toEqual({ food: amount, wood: amount, stone: amount });
+    }
+    expect(STARTING_RESOURCE_AMOUNTS[level]).toBe(amount);
+  });
+
   it('builds a unit adjacent to the base and spends resources', () => {
     const state = makeStateWithBases();
     const player = state.players[0];
@@ -187,6 +215,57 @@ describe('grid strategy engine', () => {
 
     const reachable = getReachableTiles(state, unit);
     expect(reachable.some((position) => position.x === 3 && position.y === 1)).toBe(true);
+  });
+
+  it('allows diagonal corner-cutting between buildings but not through mountains', () => {
+    const state = createInitialState({
+      width: 10,
+      height: 10,
+      playerCount: 2,
+      terrain: makePlainTerrain(10, 10),
+    });
+    const unit = makeUnit(state.players[0].id, 'footsoldier', { x: 4, y: 4 });
+    state.units.push(unit);
+    state.bases.push(
+      { id: 'building-a', ownerId: state.players[1].id, kind: 'settlement', position: { x: 5, y: 4 }, hp: 10, maxHp: 10 },
+      { id: 'building-b', ownerId: state.players[1].id, kind: 'settlement', position: { x: 4, y: 5 }, hp: 10, maxHp: 10 },
+    );
+
+    expect(getReachableTiles(state, unit)).toContainEqual({ x: 5, y: 5 });
+
+    state.terrain[4][5] = 'mountain';
+    expect(getReachableTiles(state, unit)).not.toContainEqual({ x: 5, y: 5 });
+  });
+
+  it('damages buildings in a hero splash attack', () => {
+    const state = makeStateWithBases();
+    applyAction(state, {
+      type: 'build',
+      playerId: state.players[0].id,
+      unitType: 'hero',
+      position: { x: 2, y: 1 },
+    });
+    const hero = state.units[0];
+    const primary = makeUnit(state.players[1].id, 'footsoldier', { x: 4, y: 1 });
+    const settlement = {
+      id: 'splash-settlement',
+      ownerId: state.players[1].id,
+      kind: 'settlement' as const,
+      position: { x: 5, y: 1 },
+      hp: 18,
+      maxHp: 18,
+    };
+    state.units.push(primary);
+    state.bases.push(settlement);
+
+    applyAction(state, {
+      type: 'attack',
+      playerId: state.players[0].id,
+      unitId: hero.id,
+      targetUnitId: primary.id,
+    });
+
+    expect(settlement.hp).toBe(15);
   });
 
   it('captures surviving enemy units when a base is destroyed', () => {
@@ -516,7 +595,7 @@ describe('buildings occupy their tile', () => {
     ).toThrow();
   });
 
-  it('does not let a unit walk onto a friendly or enemy building', () => {
+  it('lets a unit walk onto its own building but not an enemy building', () => {
     const state = makeStateWithBases();
     const ownBase = state.bases.find((entry) => entry.ownerId === state.players[0].id)!;
     const enemyBase = state.bases.find((entry) => entry.ownerId === state.players[1].id)!;
@@ -532,20 +611,21 @@ describe('buildings occupy their tile', () => {
     expect(reachable.length).toBeGreaterThan(0);
     expect(
       reachable.some((p) => p.x === ownBase.position.x && p.y === ownBase.position.y),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       reachable.some((p) => p.x === enemyBase.position.x && p.y === enemyBase.position.y),
     ).toBe(false);
   });
 
-  it('does not let a unit walk onto a settlement', () => {
+  it('does not let a unit walk onto an enemy settlement', () => {
     const state = makeStateWithBases();
-    const builder = makeUnit(state.players[0].id, 'builder', { x: 5, y: 5 });
-    state.units.push(builder);
-    applyAction(state, {
-      type: 'foundSettlement',
-      playerId: state.players[0].id,
-      unitId: builder.id,
+    state.bases.push({
+      id: 'enemy-settlement',
+      ownerId: state.players[1].id,
+      kind: 'settlement',
+      position: { x: 5, y: 5 },
+      hp: 18,
+      maxHp: 18,
     });
 
     const scout = makeUnit(state.players[0].id, 'cavalry', { x: 5, y: 4 });
@@ -599,8 +679,21 @@ describe('roads and bridges', () => {
     expect(state.roads).toContainEqual({ x: 2, y: 2 });
     expect(getReachableTiles(state, unit)).toContainEqual({ x: 2, y: 2 });
 
+    // Extend the road further so travelling along the connected network is
+    // discounted (each road-to-road step costs half movement).
+    applyAction(state, {
+      type: 'buildRoad',
+      playerId: player.id,
+      position: { x: 3, y: 2 },
+    });
+    applyAction(state, {
+      type: 'buildRoad',
+      playerId: player.id,
+      position: { x: 4, y: 2 },
+    });
+
     unit.position = { x: 2, y: 2 };
-    expect(getReachableTiles(state, unit)).toContainEqual({ x: 5, y: 2 });
+    expect(getReachableTiles(state, unit)).toContainEqual({ x: 4, y: 2 });
   });
 
   it('requires income, wood, and a legal adjacent position', () => {
@@ -797,6 +890,110 @@ describe('builders and settlements', () => {
       playerId: player.id,
       unitId: soldier.id,
     })).toThrow('builder');
+  });
+
+  it('repairs the main base when a builder is adjacent at turn start', () => {
+    const state = makeStateWithBases();
+    const base = state.bases[1];
+    base.hp = base.maxHp - 2;
+    const builder = makeUnit(state.players[1].id, 'builder', {
+      x: base.position.x - 1,
+      y: base.position.y,
+    });
+    state.units.push(builder);
+    state.activePlayerIndex = 0;
+
+    applyAction(state, { type: 'endTurn', playerId: state.players[0].id });
+
+    expect(base.hp).toBe(base.maxHp - 1);
+  });
+
+  it('promotes the closest settlement when the main base is destroyed', () => {
+    const state = makeStateWithBases();
+    const player = state.players[1];
+    const enemy = state.players[0];
+    const oldBase = state.bases[1];
+    oldBase.hp = 1;
+    const closeSettlement = {
+      id: 'close-settlement',
+      ownerId: player.id,
+      kind: 'settlement' as const,
+      position: { x: oldBase.position.x - 2, y: oldBase.position.y },
+      hp: 12,
+      maxHp: 18,
+    };
+    const farSettlement = {
+      id: 'far-settlement',
+      ownerId: player.id,
+      kind: 'settlement' as const,
+      position: { x: 2, y: 2 },
+      hp: 12,
+      maxHp: 18,
+    };
+    state.bases.push(closeSettlement, farSettlement);
+    const attacker = makeUnit(enemy.id, 'cannon', {
+      x: oldBase.position.x - 1,
+      y: oldBase.position.y,
+    });
+    state.units.push(attacker);
+
+    applyAction(state, {
+      type: 'attack',
+      playerId: enemy.id,
+      unitId: attacker.id,
+      targetBaseId: oldBase.id,
+    });
+
+    expect(state.bases).not.toContain(oldBase);
+    expect(closeSettlement.kind).toBe('base');
+    expect(farSettlement.kind).toBe('settlement');
+    expect(player.alive).toBe(true);
+  });
+});
+
+describe('special skills', () => {
+  it('gives cavalry archer attack range', () => {
+    const state = makeStateWithBases();
+    state.players[0].specialSkill = 'archerCavalry';
+    applyAction(state, {
+      type: 'build',
+      playerId: state.players[0].id,
+      unitType: 'cavalry',
+      position: { x: 2, y: 1 },
+    });
+
+    expect(state.units[0].attackRange).toBe(3);
+  });
+
+  it('gives builders footsoldier attack stats', () => {
+    const state = makeStateWithBases();
+    state.players[0].specialSkill = 'builderTroops';
+    applyAction(state, {
+      type: 'build',
+      playerId: state.players[0].id,
+      unitType: 'builder',
+      position: { x: 2, y: 1 },
+    });
+    const builder = state.units[0];
+
+    expect(builder.attack).toBe(UNIT_DEFS.footsoldier.attack);
+    expect(builder.attackRange).toBe(UNIT_DEFS.footsoldier.attackRange);
+    expect(canUnitAttack(state, builder)).toBe(true);
+  });
+
+  it('lets medic footsoldiers heal adjacent friendly units at turn start', () => {
+    const state = makeStateWithBases();
+    state.players[0].specialSkill = 'medicTroops';
+    const medic = makeUnit(state.players[0].id, 'footsoldier', { x: 4, y: 4 }, 'medicTroops');
+    const wounded = makeUnit(state.players[0].id, 'cavalry', { x: 5, y: 4 });
+    wounded.hp = wounded.maxHp - 2;
+    state.units.push(medic, wounded);
+
+    applyAction(state, { type: 'endTurn', playerId: state.players[0].id });
+    applyAction(state, { type: 'income', playerId: state.players[1].id, resource: 'food' });
+    applyAction(state, { type: 'endTurn', playerId: state.players[1].id });
+
+    expect(wounded.hp).toBe(wounded.maxHp - 1);
   });
 });
 

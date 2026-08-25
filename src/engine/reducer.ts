@@ -1,6 +1,6 @@
 import { getReachableTiles, findPath, isPassableTerrain } from './pathfinding.js';
 import { chebyshevDistance, hasLineOfSight } from './los.js';
-import { unitCost, UNIT_DEFS } from './units.js';
+import { unitCost, unitStatsForSkill, UNIT_DEFS } from './units.js';
 import { minBaseDistance } from './setup.js';
 import type { Action, Base, GameState, Player, Position, ResourceKey, Unit } from './types.js';
 import { BASE_MAX_HP, SETTLEMENT_COST, SETTLEMENT_MAX_HP } from './units.js';
@@ -18,6 +18,7 @@ import {
   economyYieldOn,
   MIN_ECONOMY_DISTANCE,
 } from './units.js';
+import { MARKET_COST, MARKET_MAX_HP, MARKET_EXCHANGE_RATE } from './units.js';
 
 export function getPlayerById(state: GameState, playerId: string): Player {
   const player = state.players.find((entry) => entry.id === playerId);
@@ -116,6 +117,7 @@ export function getUnitById(state: GameState, unitId: string): Unit {
 }
 
 export function canUnitAttack(state: GameState, unit: Unit): boolean {
+  if (unit.attack <= 0 || unit.attackRange <= 0) return false;
   if (unit.hasAttackedThisTurn) return false;
   if (unit.type === 'cannon' && unit.hasMovedThisTurn) return false;
   return true;
@@ -178,44 +180,142 @@ function checkResourceNodeCaptures(state: GameState, player: Player): void {
 const HEAL_RANGE = 2;
 const HEAL_AMOUNT = 1;
 
-/** Heals any of the player's damaged units that are near one of their own buildings. */
+type DamageTarget =
+  | { kind: 'unit'; target: Unit }
+  | { kind: 'base'; target: Base };
+
 /**
- * Heroes are area-damage specialists: the instant they arrive at a new tile,
- * they lash out at every enemy unit adjacent to them, on top of (and
- * independent of) whatever they do with their manual attack action later in
- * the turn. This mirrors the `attack` case's area-damage handling so the two
- * code paths behave identically (same log format, same kill bookkeeping).
+ * Applies an attacker's area damage to every enemy unit or building around a
+ * centre point. The primary target receives the full attack value; surrounding
+ * targets receive the attacker's area damage value.
  */
-function applyHeroArrivalSplash(state: GameState, player: Player, hero: Unit): void {
-  const areaRadius = hero.areaRadius ?? UNIT_DEFS[hero.type].areaRadius;
-  const areaDamage = hero.areaDamage ?? UNIT_DEFS[hero.type].areaDamage;
-  if (!areaRadius || areaRadius <= 0 || !areaDamage) return;
+function applyAreaDamage(
+  state: GameState,
+  player: Player,
+  attacker: Unit,
+  centre: Position,
+  primaryTarget?: Unit | Base,
+  isArrivalSplash = false,
+): void {
+  const areaRadius = attacker.areaRadius ?? UNIT_DEFS[attacker.type].areaRadius;
+  const areaDamage =
+    attacker.areaDamage ?? UNIT_DEFS[attacker.type].areaDamage ?? attacker.attack;
+  const targets: DamageTarget[] = [];
+  const seen = new Set<string>();
+  const addTarget = (candidate: DamageTarget) => {
+    if (seen.has(candidate.target.id)) return;
+    seen.add(candidate.target.id);
+    targets.push(candidate);
+  };
 
-  const areaTargets = state.units.filter(
-    (unit) =>
-      unit.ownerId !== player.id &&
-      chebyshevDistance(unit.position, hero.position) <= areaRadius &&
-      hasLineOfSight(state, hero.position, unit.position),
-  );
-  if (areaTargets.length === 0) return;
-
-  const destroyedIds = new Set<string>();
-  for (const target of areaTargets) {
-    target.hp -= areaDamage;
-    const targetOwner = getPlayerById(state, target.ownerId);
-    state.actionLog.push(
-      `⚔️ ${player.name}'s ${hero.type} strikes all around on arrival, hitting ${targetOwner.name}'s ${target.type} for ${areaDamage}.`,
-    );
-    if (target.hp <= 0) {
-      destroyedIds.add(target.id);
-      player.stats.unitsKilled += 1;
-      targetOwner.stats.unitsLost += 1;
-      state.actionLog.push(`${targetOwner.name}'s ${target.type} was destroyed.`);
+  if (areaRadius && areaRadius > 0) {
+    for (const unit of state.units) {
+      if (
+        unit.ownerId !== player.id &&
+        chebyshevDistance(unit.position, centre) <= areaRadius &&
+        hasLineOfSight(state, attacker.position, unit.position)
+      ) {
+        addTarget({ kind: 'unit', target: unit });
+      }
+    }
+    for (const base of state.bases) {
+      if (
+        base.ownerId !== player.id &&
+        chebyshevDistance(base.position, centre) <= areaRadius &&
+        hasLineOfSight(state, attacker.position, base.position)
+      ) {
+        addTarget({ kind: 'base', target: base });
+      }
+    }
+  } else if (primaryTarget) {
+    const primaryUnit = state.units.find((unit) => unit.id === primaryTarget.id);
+    if (primaryUnit) {
+      addTarget({ kind: 'unit', target: primaryUnit });
+    } else {
+      const primaryBase = state.bases.find((base) => base.id === primaryTarget.id);
+      if (primaryBase) addTarget({ kind: 'base', target: primaryBase });
     }
   }
-  if (destroyedIds.size > 0) {
-    state.units = state.units.filter((unit) => !destroyedIds.has(unit.id));
+
+  if (targets.length === 0 || !areaDamage) return;
+
+  const destroyedUnitIds = new Set<string>();
+  const destroyedBases: Base[] = [];
+  for (const entry of targets) {
+    const damage = primaryTarget?.id === entry.target.id ? attacker.attack : areaDamage;
+    entry.target.hp -= damage;
+    const targetOwner = getPlayerById(state, entry.target.ownerId);
+    if (entry.kind === 'unit') {
+      state.actionLog.push(
+        isArrivalSplash
+          ? `⚔️ ${player.name}'s ${attacker.type} strikes all around on arrival, hitting ${targetOwner.name}'s ${entry.target.type} for ${damage}.`
+          : `${player.name}'s ${attacker.type} hit ${targetOwner.name}'s ${entry.target.type} for ${damage}${primaryTarget?.id === entry.target.id ? '.' : ' (area attack).'}`,
+      );
+      if (entry.target.hp <= 0) {
+        destroyedUnitIds.add(entry.target.id);
+        player.stats.unitsKilled += 1;
+        targetOwner.stats.unitsLost += 1;
+        state.actionLog.push(`${targetOwner.name}'s ${entry.target.type} was destroyed.`);
+      }
+    } else {
+      state.actionLog.push(
+        `${player.name}'s ${attacker.type} hit ${buildingLabel(entry.target)} for ${damage}${primaryTarget?.id === entry.target.id ? '.' : ' (area attack).'}`,
+      );
+      if (entry.target.hp <= 0) {
+        destroyedBases.push(entry.target);
+        player.stats.buildingsRazed += 1;
+      }
+    }
   }
+
+  if (destroyedUnitIds.size > 0) {
+    state.units = state.units.filter((unit) => !destroyedUnitIds.has(unit.id));
+  }
+  if (destroyedBases.length === 0) return;
+
+  state.bases = state.bases.filter((base) => !destroyedBases.some((destroyed) => destroyed.id === base.id));
+  for (const destroyedBase of destroyedBases) {
+    const defender = getPlayerById(state, destroyedBase.ownerId);
+    if (destroyedBase.kind !== 'base') {
+      state.actionLog.push(`🔥 ${defender.name}'s ${buildingLabel(destroyedBase)} was destroyed.`);
+      continue;
+    }
+
+    const replacement = state.bases
+      .filter((base) => base.ownerId === defender.id && base.kind === 'settlement')
+      .sort(
+        (a, b) =>
+          chebyshevDistance(a.position, destroyedBase.position) -
+            chebyshevDistance(b.position, destroyedBase.position) ||
+          a.id.localeCompare(b.id),
+      )[0];
+    if (replacement) {
+      replacement.kind = 'base';
+      replacement.maxHp = BASE_MAX_HP;
+      replacement.hp = Math.min(replacement.hp, replacement.maxHp);
+      defender.baseId = replacement.id;
+      state.actionLog.push(
+        `🏰 ${defender.name}'s base was destroyed. Their closest settlement became the new base.`,
+      );
+      continue;
+    }
+
+    defender.alive = false;
+    defender.eliminatedOnTurn = state.turn;
+    state.bases = state.bases.filter((base) => base.ownerId !== defender.id);
+    const capturedUnits = state.units.filter((unit) => unit.ownerId === defender.id);
+    for (const unit of capturedUnits) {
+      unit.ownerId = player.id;
+      unit.hasMovedThisTurn = true;
+      unit.hasAttackedThisTurn = true;
+      unit.turnStartPosition = { ...unit.position };
+    }
+    state.actionLog.push(`${defender.name}'s base was destroyed and their remaining units were captured.`);
+  }
+}
+
+function applyHeroArrivalSplash(state: GameState, player: Player, hero: Unit): void {
+  applyAreaDamage(state, player, hero, hero.position, undefined, true);
 }
 
 function healUnitsNearBase(state: GameState, player: Player): void {
@@ -231,6 +331,35 @@ function healUnitsNearBase(state: GameState, player: Player): void {
     unit.hp = Math.min(unit.maxHp, unit.hp + HEAL_AMOUNT);
     state.actionLog.push(`💚 ${player.name}'s ${unit.type} rests near a building and heals ${HEAL_AMOUNT} HP.`);
   }
+}
+
+/** Medic troops heal adjacent friendly units at the start of their owner's turn. */
+function healMedicUnits(state: GameState, player: Player): void {
+  if (player.specialSkill !== 'medicTroops') return;
+  const medics = state.units.filter((unit) => unit.ownerId === player.id && unit.type === 'footsoldier');
+  for (const medic of medics) {
+    for (const unit of state.units) {
+      if (unit.ownerId !== player.id || unit.id === medic.id || unit.hp >= unit.maxHp) continue;
+      if (chebyshevDistance(medic.position, unit.position) > 1) continue;
+      unit.hp = Math.min(unit.maxHp, unit.hp + HEAL_AMOUNT);
+      state.actionLog.push(`🩺 ${player.name}'s medic footsoldier heals a nearby ${unit.type} for 1 HP.`);
+    }
+  }
+}
+
+/** A builder adjacent to the main base repairs one base HP at the start of each turn. */
+function healBaseNearBuilder(state: GameState, player: Player): void {
+  const base = getMainBase(state, player.id);
+  if (!base || base.hp >= base.maxHp) return;
+  const builderNearby = state.units.some(
+    (unit) =>
+      unit.ownerId === player.id &&
+      unit.type === 'builder' &&
+      chebyshevDistance(unit.position, base.position) <= 1,
+  );
+  if (!builderNearby) return;
+  base.hp = Math.min(base.maxHp, base.hp + 1);
+  state.actionLog.push(`🔨 ${player.name}'s nearby builder repairs the base for 1 HP.`);
 }
 
 /**
@@ -295,6 +424,8 @@ export function advanceTurn(state: GameState): GameState {
     }
   }
   healUnitsNearBase(state, state.players[nextIndex]);
+  healMedicUnits(state, state.players[nextIndex]);
+  healBaseNearBuilder(state, state.players[nextIndex]);
   repairConnectedBuildings(state, state.players[nextIndex]);
   // Towers open fire before their owner acts, so anything that ended a move
   // inside their arc during the previous turn gets punished for it.
@@ -497,7 +628,7 @@ export function canBuildTower(state: GameState, player: Player, unit: Unit): boo
  * towers and farms in a single turn now that it survives the job.
  */
 function builderIsSpent(unit: Unit): boolean {
-  return unit.hasMovedThisTurn && unit.hasAttackedThisTurn;
+  return unit.hasAttackedThisTurn;
 }
 
 /**
@@ -549,6 +680,44 @@ export function canBuildEconomy(
   produces: ResourceKey,
 ): boolean {
   return economyBlockReason(state, player, unit, produces) === null;
+}
+
+/**
+ * Why the given builder cannot raise a market where it stands, or null if it
+ * can. Only one market may exist per player at a time — it's a permanent
+ * economic upgrade, not a disposable building, so there is no point letting a
+ * player stack several.
+ */
+export function marketBlockReason(state: GameState, player: Player, unit: Unit): string | null {
+  if (unit.type !== 'builder') return 'Only a builder can raise a market.';
+  if (unit.ownerId !== player.id) return 'That is not your builder.';
+  if (builderIsSpent(unit)) return 'This builder has already used its turn.';
+
+  const { x, y } = unit.position;
+  const terrain = state.terrain[y]?.[x];
+  if (!isPassableTerrain(terrain)) {
+    return 'A market needs solid ground — not a lake or a mountain.';
+  }
+  if (state.bases.some((entry) => entry.position.x === x && entry.position.y === y)) {
+    return 'There is already a building on this tile.';
+  }
+  if (state.resourceNodes.some((node) => node.position.x === x && node.position.y === y)) {
+    return 'You cannot build over a resource node — move the builder off it first.';
+  }
+  const alreadyHasMarket = state.bases.some(
+    (entry) => entry.ownerId === player.id && entry.kind === 'market',
+  );
+  if (alreadyHasMarket) {
+    return 'You may only have one market at a time.';
+  }
+  for (const [key, amount] of Object.entries(MARKET_COST) as [ResourceKey, number][]) {
+    if (player.resources[key] < amount) return `Not enough ${key} to build a market.`;
+  }
+  return null;
+}
+
+export function canBuildMarket(state: GameState, player: Player, unit: Unit): boolean {
+  return marketBlockReason(state, player, unit) === null;
 }
 
 export function applyAction(state: GameState, action: Action): GameState {
@@ -665,7 +834,7 @@ export function applyAction(state: GameState, action: Action): GameState {
       }
 
       const unitId = `${action.unitType}-${player.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const stats = UNIT_DEFS[action.unitType];
+      const stats = unitStatsForSkill(action.unitType, player.specialSkill);
       const builtUnit: Unit = {
         id: unitId,
         ownerId: player.id,
@@ -832,6 +1001,76 @@ export function applyAction(state: GameState, action: Action): GameState {
       return state;
     }
 
+    case 'buildMarket': {
+      const player = getPlayerById(state, action.playerId);
+      const activePlayer = getActivePlayer(state);
+      if (player.id !== activePlayer.id) {
+        throw new Error('Only the active player may build a market.');
+      }
+      if (!player.hasCollectedIncomeThisTurn) {
+        throw new Error('You must collect income before taking any other action this turn.');
+      }
+
+      const builder = getUnitById(state, action.unitId);
+      const blockReason = marketBlockReason(state, player, builder);
+      if (blockReason) throw new Error(blockReason);
+
+      for (const [key, amount] of Object.entries(MARKET_COST) as [ResourceKey, number][]) {
+        player.resources[key] -= amount;
+        player.stats.resourcesSpent[key] += amount;
+      }
+
+      // The builder survives — raising a market just costs it the rest of its turn.
+      builder.hasMovedThisTurn = true;
+      builder.hasAttackedThisTurn = true;
+      state.bases.push({
+        id: `market-${player.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        ownerId: player.id,
+        kind: 'market',
+        position: { ...builder.position },
+        hp: MARKET_MAX_HP,
+        maxHp: MARKET_MAX_HP,
+      });
+      state.actionLog.push(
+        `🏛️ ${player.name}'s builder raised a market at ${builder.position.x},${builder.position.y} — resources may now be exchanged ${MARKET_EXCHANGE_RATE}:1.`,
+      );
+      return state;
+    }
+
+    case 'exchangeResources': {
+      const player = getPlayerById(state, action.playerId);
+      const activePlayer = getActivePlayer(state);
+      if (player.id !== activePlayer.id) {
+        throw new Error('Only the active player may exchange resources.');
+      }
+      if (!player.hasCollectedIncomeThisTurn) {
+        throw new Error('You must collect income before taking any other action this turn.');
+      }
+      if (action.from === action.to) {
+        throw new Error('Choose two different resources to exchange.');
+      }
+      if (!Number.isInteger(action.amount) || action.amount <= 0) {
+        throw new Error('Choose a positive amount to exchange.');
+      }
+      const hasMarket = state.bases.some(
+        (entry) => entry.ownerId === player.id && entry.kind === 'market',
+      );
+      if (!hasMarket) {
+        throw new Error('You need a market to exchange resources.');
+      }
+      const cost = action.amount * MARKET_EXCHANGE_RATE;
+      if (player.resources[action.from] < cost) {
+        throw new Error(`Not enough ${action.from} for that exchange.`);
+      }
+      player.resources[action.from] -= cost;
+      player.stats.resourcesSpent[action.from] += cost;
+      player.resources[action.to] += action.amount;
+      state.actionLog.push(
+        `⚖️ ${player.name} exchanged ${cost} ${action.from} for ${action.amount} ${action.to} at the market.`,
+      );
+      return state;
+    }
+
     case 'move': {
       const player = getPlayerById(state, action.playerId);
       const activePlayer = getActivePlayer(state);
@@ -911,74 +1150,7 @@ export function applyAction(state: GameState, action: Action): GameState {
       }
 
       attacker.hasAttackedThisTurn = true;
-
-      const areaRadius = attacker.areaRadius ?? UNIT_DEFS[attacker.type].areaRadius;
-      const areaDamage = attacker.areaDamage ?? UNIT_DEFS[attacker.type].areaDamage;
-      if (targetUnit) {
-        const areaTargets =
-          areaRadius && areaRadius > 0
-            ? state.units.filter(
-                (unit) =>
-                  unit.ownerId !== player.id &&
-                  chebyshevDistance(unit.position, targetPosition) <= areaRadius &&
-                  hasLineOfSight(state, attacker.position, unit.position),
-              )
-            : [targetUnit];
-        const destroyedIds = new Set<string>();
-
-        for (const target of areaTargets) {
-          const damage = target.id === targetUnit.id ? attacker.attack : areaDamage ?? attacker.attack;
-          target.hp -= damage;
-          const targetOwner = getPlayerById(state, target.ownerId);
-          state.actionLog.push(
-            `${player.name}'s ${attacker.type} hit ${targetOwner.name}'s ${target.type} for ${damage}${target.id === targetUnit.id ? '.' : ' (area attack).'}`,
-          );
-          if (target.hp <= 0) {
-            destroyedIds.add(target.id);
-            player.stats.unitsKilled += 1;
-            targetOwner.stats.unitsLost += 1;
-            state.actionLog.push(`${targetOwner.name}'s ${target.type} was destroyed.`);
-          }
-        }
-        if (destroyedIds.size > 0) {
-          state.units = state.units.filter((unit) => !destroyedIds.has(unit.id));
-        }
-        return state;
-      }
-
-      if (targetBase) {
-        targetBase.hp -= attacker.attack;
-        const structureLabel = buildingLabel(targetBase);
-        state.actionLog.push(`${player.name}'s ${attacker.type} hit the ${structureLabel} for ${attacker.attack}.`);
-        if (targetBase.hp <= 0) {
-          const defender = getPlayerById(state, targetBase.ownerId);
-          player.stats.buildingsRazed += 1;
-          state.bases = state.bases.filter((base) => base.id !== targetBase.id);
-
-          // Only the main base is a loss condition. Razing anything else just
-          // costs the defender that building: a forward spawn point, their
-          // covering fire, or a slice of their income.
-          if (targetBase.kind !== 'base') {
-            state.actionLog.push(`🔥 ${defender.name}'s ${structureLabel} was destroyed.`);
-            return state;
-          }
-
-          defender.alive = false;
-          defender.eliminatedOnTurn = state.turn;
-          // A defeated player loses every building they still held.
-          state.bases = state.bases.filter((base) => base.ownerId !== defender.id);
-          const capturedUnits = state.units.filter((unit) => unit.ownerId === defender.id);
-          for (const unit of capturedUnits) {
-            unit.ownerId = player.id;
-            // Captured units are exhausted for the remainder of this turn (DESIGN.md section 8).
-            unit.hasMovedThisTurn = true;
-            unit.hasAttackedThisTurn = true;
-            unit.turnStartPosition = { ...unit.position };
-          }
-          state.actionLog.push(`${defender.name}'s base was destroyed and their remaining units were captured.`);
-        }
-      }
-
+      applyAreaDamage(state, player, attacker, targetPosition, targetUnit ?? targetBase);
       return state;
     }
 

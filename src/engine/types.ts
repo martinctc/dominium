@@ -2,6 +2,8 @@ export type ResourceKey = 'food' | 'wood' | 'stone';
 export type TerrainType = 'plain' | 'lake' | 'mountain' | 'hills' | 'forest';
 export type UnitType = 'footsoldier' | 'cavalry' | 'cannon' | 'archer' | 'builder' | 'hero';
 export type PlayerColor = 'red' | 'blue' | 'green' | 'yellow';
+export type SpecialSkill = 'medicTroops' | 'archerCavalry' | 'builderTroops';
+export type StartingResourceLevel = 'low' | 'normal' | 'high' | 'deathmatch';
 /** Preset map generation styles (DESIGN.md "themed maps"). */
 export type MapTheme = 'random' | 'river' | 'hills' | 'oasis';
 
@@ -29,6 +31,7 @@ export interface Player {
   id: string;
   name: string;
   color: PlayerColor;
+  specialSkill: SpecialSkill;
   baseId: string;
   alive: boolean;
   /** Turn on which the player's main base was destroyed, or null while active. */
@@ -62,11 +65,14 @@ export interface TimelineEntry {
  *   shoots on its own each turn but never spawns, heals or anchors roads.
  * - 'economy': a farm, lumber camp or quarry. Yields `produces` every turn its
  *   owner collects income. Defenceless and never spawns or heals.
+ * - 'market': lets its owner exchange resources at a fixed ratio. Never
+ *   spawns, heals, anchors roads, or yields income on its own. Only one may
+ *   exist per player at a time.
  */
 export interface Base {
   id: string;
   ownerId: string;
-  kind: 'base' | 'settlement' | 'tower' | 'economy';
+  kind: 'base' | 'settlement' | 'tower' | 'economy' | 'market';
   position: Position;
   hp: number;
   maxHp: number;
@@ -197,6 +203,24 @@ export interface BuildEconomyAction {
   produces: ResourceKey;
 }
 
+/** Consumes a builder unit where it stands, raising a market on that tile.
+ * A player may only ever have one market at a time. */
+export interface BuildMarketAction {
+  type: 'buildMarket';
+  playerId: string;
+  unitId: string;
+}
+
+/** Exchanges resources at the owner's market, at a fixed 2:1 ratio. */
+export interface ExchangeResourcesAction {
+  type: 'exchangeResources';
+  playerId: string;
+  from: ResourceKey;
+  to: ResourceKey;
+  /** How many units of `to` to receive; costs `amount * MARKET_EXCHANGE_RATE` of `from`. */
+  amount: number;
+}
+
 export interface EndTurnAction {
   type: 'endTurn';
   playerId: string;
@@ -211,4 +235,6 @@ export type Action =
   | BuildRoadAction
   | FoundSettlementAction
   | BuildTowerAction
-  | BuildEconomyAction;
+  | BuildEconomyAction
+  | BuildMarketAction
+  | ExchangeResourcesAction;

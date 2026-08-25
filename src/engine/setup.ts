@@ -1,9 +1,28 @@
-import type { Base, GameState, MapTheme, Player, PlayerColor, Position, ResourceKey, ResourceNode, ResourceNodeBonus, TerrainType } from './types.js';
+import type {
+  Base,
+  GameState,
+  MapTheme,
+  Player,
+  PlayerColor,
+  Position,
+  ResourceKey,
+  ResourceNode,
+  ResourceNodeBonus,
+  SpecialSkill,
+  StartingResourceLevel,
+  TerrainType,
+} from './types.js';
 import { BASE_MAX_HP } from './units.js';
 import { isPassableTerrain } from './pathfinding.js';
 
 /** Each player begins the game holding this many of each resource, for a quicker start. */
 export const STARTING_RESOURCES = 2;
+export const STARTING_RESOURCE_AMOUNTS: Record<StartingResourceLevel, number> = {
+  low: 1,
+  normal: STARTING_RESOURCES,
+  high: 4,
+  deathmatch: 10,
+};
 
 /** Minimum Chebyshev distance required between any two players' bases when placing freely. */
 export function minBaseDistance(width: number, height: number): number {
@@ -599,17 +618,24 @@ export function getBasePositionForPlayer(playerIndex: number, width: number, hei
   return { x, y };
 }
 
-export function createPlayer(playerIndex: number, width: number, height: number): Player {
+export function createPlayer(
+  playerIndex: number,
+  width: number,
+  height: number,
+  specialSkill: SpecialSkill = 'medicTroops',
+  startingResources = STARTING_RESOURCES,
+): Player {
   const colorMap: PlayerColor[] = ['red', 'blue', 'green', 'yellow'];
   const zone = getHomeZoneForPlayer(playerIndex, width, height);
   return {
     id: `player-${playerIndex + 1}`,
     name: `Player ${playerIndex + 1}`,
     color: colorMap[playerIndex] ?? 'red',
+    specialSkill,
     baseId: '',
     alive: true,
     eliminatedOnTurn: null,
-    resources: { food: STARTING_RESOURCES, wood: STARTING_RESOURCES, stone: STARTING_RESOURCES },
+    resources: { food: startingResources, wood: startingResources, stone: startingResources },
     hasCollectedIncomeThisTurn: false,
     homeZone: zone,
     stats: {
@@ -623,7 +649,7 @@ export function createPlayer(playerIndex: number, width: number, height: number)
       economyBuilt: 0,
       // Seeded with the starting stockpile so the running totals hold the
       // invariant: collected - spent === what the player currently has.
-      incomeCollected: { food: STARTING_RESOURCES, wood: STARTING_RESOURCES, stone: STARTING_RESOURCES },
+      incomeCollected: { food: startingResources, wood: startingResources, stone: startingResources },
       resourcesSpent: { food: 0, wood: 0, stone: 0 },
     },
   };
@@ -637,6 +663,8 @@ export function createInitialState({
   seed = 'initial',
   nodeCount,
   theme = 'random',
+  specialSkill = 'medicTroops',
+  startingResources = 'normal',
 }: {
   width?: number;
   height?: number;
@@ -648,9 +676,25 @@ export function createInitialState({
   nodeCount?: number;
   /** Preset map style: 'random' (default), 'river', 'hills', or 'oasis'. */
   theme?: MapTheme;
+  /** Skill selected by player 1; later players receive deterministic skills for AI/hot-seat use. */
+  specialSkill?: SpecialSkill;
+  /** Initial amount of each resource granted to every player. */
+  startingResources?: StartingResourceLevel;
 } = {}): GameState {
   const finalTerrain = terrain ?? generateThemedTerrain(width, height, seed, playerCount, theme);
-  const players = Array.from({ length: playerCount }, (_, index) => createPlayer(index, width, height));
+  const skills: SpecialSkill[] = ['medicTroops', 'archerCavalry', 'builderTroops'];
+  const startingAmount = STARTING_RESOURCE_AMOUNTS[startingResources];
+  const players = Array.from(
+    { length: playerCount },
+    (_, index) =>
+      createPlayer(
+        index,
+        width,
+        height,
+        index === 0 ? specialSkill : skills[(index - 1) % skills.length],
+        startingAmount,
+      ),
+  );
   const resourceNodes =
     theme === 'oasis'
       ? generateClusteredResourceNodes(width, height, finalTerrain, seed, nodeCount)

@@ -205,7 +205,7 @@ function moveTowardNearestBase(
 }
 
 function runUnitAction(state: GameState, unit: Unit, enemyBases: Base[], enemyUnits: Unit[]): void {
-  if (unit.type === 'builder') {
+  if (unit.type === 'builder' && unit.attack === 0) {
     // Builders never fight. Spend the builder the moment the spot is legal,
     // otherwise push toward the front (keeping clear of enemies) and retry.
     const owner = getPlayerById(state, unit.ownerId);

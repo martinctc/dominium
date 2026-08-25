@@ -41,10 +41,13 @@ export function isBlockedByTerrain(state: GameState, position: Position) {
 
 /** Movement cost to step onto this tile: hills and forest are slow going (2), everything else
  * is normal (1). A road/bridge always normalizes the tile to cost 1, since it's paved
- * regardless of terrain. */
-function tileMoveCost(state: GameState, position: Position): number {
-  if (hasRoad(state, position)) return 1;
-  const terrain = state.terrain[position.y]?.[position.x];
+ * regardless of terrain — *unless* the step is travelling road-to-road, i.e. both the tile
+ * being left and the tile being entered are paved, in which case it costs half (0.5). This
+ * rewards actually following a road/bridge rather than merely starting or ending on one. */
+function tileMoveCost(state: GameState, from: Position, to: Position): number {
+  if (hasRoad(state, from) && hasRoad(state, to)) return 0.5;
+  if (hasRoad(state, to)) return 1;
+  const terrain = state.terrain[to.y]?.[to.x];
   return terrain === 'hills' || terrain === 'forest' ? 2 : 1;
 }
 
@@ -59,13 +62,15 @@ function isOccupied(state: GameState, position: Position, excludeUnitId?: string
 }
 
 /**
- * Buildings are solid: units cannot stand on, or path through, a base or
- * settlement (their own or an enemy's). Enemy buildings must be attacked from
- * an adjacent tile rather than walked over.
+ * Enemy buildings are solid: units cannot stand on, or path through, them.
+ * Friendly buildings can be occupied and crossed by their owner's units.
  */
-export function isBlockedByBuilding(state: GameState, position: Position) {
+export function isBlockedByBuilding(state: GameState, position: Position, unitOwnerId?: string) {
   return state.bases.some(
-    (building) => building.position.x === position.x && building.position.y === position.y,
+    (building) =>
+      building.position.x === position.x &&
+      building.position.y === position.y &&
+      building.ownerId !== unitOwnerId,
   );
 }
 
@@ -79,6 +84,8 @@ function canMoveDiagonal(state: GameState, from: Position, to: Position) {
   const cornerY2 = from.y + dy;
   const cornerX2 = from.x;
 
+  // Buildings occupy their own tiles, but unlike mountains they do not seal
+  // the diagonal gap between two orthogonally adjacent buildings.
   return !isBlockedByTerrain(state, { x: cornerX, y: cornerY }) && !isBlockedByTerrain(state, { x: cornerX2, y: cornerY2 });
 }
 
@@ -93,7 +100,7 @@ function popClosest(frontier: Array<{ key: string; position: Position; distance:
 
 export function getReachableTiles(state: GameState, unit: Unit): Position[] {
   const start = { x: unit.position.x, y: unit.position.y };
-  const moveRange = unit.moveRange + (hasRoad(state, start) ? 1 : 0);
+  const moveRange = unit.moveRange;
   const frontier: Array<{ key: string; position: Position; distance: number }> = [
     { key: tileKey(start), position: start, distance: 0 },
   ];
@@ -110,9 +117,9 @@ export function getReachableTiles(state: GameState, unit: Unit): Position[] {
       const nextKey = tileKey(next);
       if (isBlockedByTerrain(state, next)) continue;
       if (isOccupied(state, next, unit.id)) continue;
-      if (isBlockedByBuilding(state, next)) continue;
+      if (isBlockedByBuilding(state, next, unit.ownerId)) continue;
       if (!canMoveDiagonal(state, current.position, next)) continue;
-      const nextDistance = distance + tileMoveCost(state, next);
+      const nextDistance = distance + tileMoveCost(state, current.position, next);
       if (nextDistance > moveRange) continue;
       if (visited.has(nextKey) && (visited.get(nextKey) ?? Infinity) <= nextDistance) continue;
 
@@ -135,7 +142,7 @@ export function findPath(state: GameState, unit: Unit, destination: Position): P
   }
 
   const start = { x: unit.position.x, y: unit.position.y };
-  const moveRange = unit.moveRange + (hasRoad(state, start) ? 1 : 0);
+  const moveRange = unit.moveRange;
   const frontier: Array<{ key: string; position: Position; distance: number }> = [
     { key: tileKey(start), position: start, distance: 0 },
   ];
@@ -154,9 +161,9 @@ export function findPath(state: GameState, unit: Unit, destination: Position): P
       const nextKey = tileKey(next);
       if (isBlockedByTerrain(state, next)) continue;
       if (isOccupied(state, next, unit.id)) continue;
-      if (isBlockedByBuilding(state, next)) continue;
+      if (isBlockedByBuilding(state, next, unit.ownerId)) continue;
       if (!canMoveDiagonal(state, current.position, next)) continue;
-      const nextDistance = currentDistance + tileMoveCost(state, next);
+      const nextDistance = currentDistance + tileMoveCost(state, current.position, next);
       if (nextDistance > moveRange) continue;
       if (visited.has(nextKey) && (visited.get(nextKey) ?? Infinity) <= nextDistance) continue;
       visited.set(nextKey, nextDistance);

@@ -1,4 +1,4 @@
-import type { ResourceKey, TerrainType, Unit, UnitType } from './types.js';
+import type { ResourceKey, SpecialSkill, TerrainType, Unit, UnitType } from './types.js';
 
 export const BASE_MAX_HP = 40;
 
@@ -62,6 +62,18 @@ export const ECONOMY_TERRAIN_BONUS = 1;
  * with a single defender.
  */
 export const MIN_ECONOMY_DISTANCE = 2;
+
+/**
+ * Market: lets its owner convert a surplus resource into a scarce one.
+ *
+ * Deliberately fragile and cheap relative to what it unlocks — the real cost
+ * is scarcity (only one may ever stand at a time) and the unfavourable
+ * exchange rate, not the up-front materials.
+ */
+export const MARKET_MAX_HP = 8;
+export const MARKET_COST: Record<ResourceKey, number> = { food: 1, wood: 2, stone: 1 };
+/** Resources spent per resource received when exchanging at a market. */
+export const MARKET_EXCHANGE_RATE = 2;
 
 /** Human-readable name for an economy building yielding the given resource. */
 export function economyLabelFor(produces: ResourceKey): string {
@@ -149,8 +161,30 @@ export const UNIT_DEFS: Record<
   },
 };
 
-export function makeUnit(ownerId: string, type: UnitType, position: { x: number; y: number }): Unit {
+export function unitStatsForSkill(type: UnitType, specialSkill?: SpecialSkill) {
   const def = UNIT_DEFS[type];
+  return {
+    ...def,
+    attack:
+      type === 'builder' && specialSkill === 'builderTroops'
+        ? UNIT_DEFS.footsoldier.attack
+        : def.attack,
+    attackRange:
+      type === 'cavalry' && specialSkill === 'archerCavalry'
+        ? UNIT_DEFS.archer.attackRange
+        : type === 'builder' && specialSkill === 'builderTroops'
+          ? UNIT_DEFS.footsoldier.attackRange
+          : def.attackRange,
+  };
+}
+
+export function makeUnit(
+  ownerId: string,
+  type: UnitType,
+  position: { x: number; y: number },
+  specialSkill?: SpecialSkill,
+): Unit {
+  const def = unitStatsForSkill(type, specialSkill);
   return {
     id: `${type}-${ownerId}-${Math.random().toString(36).slice(2, 9)}`,
     ownerId,
