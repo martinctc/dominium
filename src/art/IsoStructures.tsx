@@ -151,7 +151,36 @@ export function IsoQuarry({ team, ...rest }: IsoIconProps) {
   );
 }
 
-/** A single conifer: trunk plus two stacked, tapered canopy tiers. */
+/** A market stall: a striped awning in the owner's colour over an open wooden
+ * counter, with a coin pile — deliberately distinct from the production
+ * buildings above since it never yields resources, only exchanges them. */
+export function IsoMarket({ team, ...rest }: IsoIconProps) {
+  const ramp = rampFor(team);
+  return (
+    <Frame {...rest}>
+      <Solid x0={0.06} y0={0.06} x1={0.94} y1={0.94} z0={0} z1={0.06} color={SOIL} />
+      {/* Four corner posts holding up the awning. */}
+      {[
+        [0.14, 0.14],
+        [0.78, 0.14],
+        [0.14, 0.78],
+        [0.78, 0.78],
+      ].map(([px, py]) => (
+        <Solid key={`${px}-${py}`} x0={px} y0={py} x1={px + 0.08} y1={py + 0.08} z0={0.06} z1={0.62} color={WOOD} />
+      ))}
+      {/* Striped canopy: alternating team colour and cream. */}
+      <Roof x0={0.06} y0={0.06} x1={0.94} y1={0.94} z0={0.62} peak={0.86} color={ramp.mid} />
+      <Solid x0={0.06} y0={0.06} x1={0.94} y1={0.2} z0={0.6} z1={0.66} color={'#f1e6cf'} />
+      <Solid x0={0.06} y0={0.4} x1={0.94} y1={0.54} z0={0.6} z1={0.66} color={'#f1e6cf'} />
+      {/* Counter with a coin pile on top. */}
+      <Solid x0={0.22} y0={0.3} x1={0.78} y1={0.62} z0={0.06} z1={0.3} color={WOOD_LIGHT} />
+      <Solid x0={0.42} y0={0.42} x1={0.58} y1={0.5} z0={0.3} z1={0.36} color={GOLD} />
+      <Solid x0={0.46} y0={0.46} x1={0.54} y1={0.54} z0={0.36} z1={0.4} color={shade(GOLD, 0.2)} />
+    </Frame>
+  );
+}
+
+
 function Conifer({ x, y, scale = 1, base = 0 }: { x: number; y: number; scale?: number; base?: number }) {
   const r = 0.19 * scale;
   return (

@@ -25,6 +25,10 @@ import {
   economyCostFor,
   economyLabelFor,
   economyYieldOn,
+  MARKET_COST,
+  MARKET_MAX_HP,
+  MARKET_EXCHANGE_RATE,
+  marketBlockReason,
   LUMP_SUM_BONUS,
   ONGOING_BONUS_PER_TURN,
   settlementBlockReason,
@@ -33,15 +37,25 @@ import {
   getUnitById,
   getVisibleTilesForPlayer,
   UNIT_DEFS,
+  unitStatsForSkill,
   BASE_MAX_HP,
 } from './engine/index.js';
-import type { GameState, Position, UnitType, ResourceKey, MapTheme } from './engine/index.js';
+import type {
+  GameState,
+  Position,
+  SpecialSkill,
+  StartingResourceLevel,
+  UnitType,
+  ResourceKey,
+  MapTheme,
+} from './engine/index.js';
 import {
   ISO_TERRAIN_COMPONENTS,
   ISO_ECONOMY_COMPONENTS,
   IsoBase,
   IsoSettlement,
   IsoTower,
+  IsoMarket,
   IsoChest,
   IsoBridge,
   ISO_RESOURCE_NODE_COMPONENTS,
@@ -57,7 +71,11 @@ import {
   BaseIcon,
   SettlementIcon,
   TowerIcon,
+  MarketIcon,
   BridgeIcon,
+  RoadIcon,
+  CrossroadIcon,
+  RoadBottomToRightIcon,
   FlagIcon,
   ChestIcon,
   MountainIcon,
@@ -151,8 +169,23 @@ function parseActionLog(
   });
 }
 
-function unitTooltip(unitType: UnitType): string {
-  const def = UNIT_DEFS[unitType];
+const SPECIAL_SKILL_INFO: Record<SpecialSkill, { label: string; description: string }> = {
+  medicTroops: {
+    label: 'Medic troops',
+    description: 'Foot soldiers heal adjacent friendly units for 1 HP at the start of your turns.',
+  },
+  archerCavalry: {
+    label: 'Archer cavalry',
+    description: 'Cavalry attack at range 3, matching archers.',
+  },
+  builderTroops: {
+    label: 'Builder troops',
+    description: 'Builders gain footsoldier attack stats: 3 attack at range 1.',
+  },
+};
+
+function unitTooltip(unitType: UnitType, specialSkill?: SpecialSkill): string {
+  const def = unitStatsForSkill(unitType, specialSkill);
   const costText = (Object.entries(def.cost) as [ResourceKey, number][])
     .filter(([, amount]) => amount > 0)
     .map(([resource, amount]) => `${amount} ${resource}`)
@@ -181,6 +214,85 @@ function costSummary(cost: Record<ResourceKey, number>): string {
     .join(', ');
 }
 
+const EXCHANGE_RESOURCE_KEYS: ResourceKey[] = ['food', 'wood', 'stone'];
+
+/**
+ * The market's resource-exchange panel. Always visible once the active player
+ * has a market, independent of what unit or tile is currently selected — it is
+ * a standing economic action, not something tied to a builder's turn.
+ */
+function MarketExchangePanel({
+  resources,
+  disabled,
+  onExchange,
+}: {
+  resources: Record<ResourceKey, number>;
+  disabled: boolean;
+  onExchange: (from: ResourceKey, to: ResourceKey, amount: number) => void;
+}) {
+  const [from, setFrom] = useState<ResourceKey>('food');
+  const [to, setTo] = useState<ResourceKey>('wood');
+  const [amount, setAmount] = useState(1);
+  const cost = amount * MARKET_EXCHANGE_RATE;
+  const canAfford = resources[from] >= cost && from !== to && amount > 0;
+
+  return (
+    <div className="market-panel">
+      <span className="market-panel-title">
+        <MarketIcon size={16} /> Market exchange ({MARKET_EXCHANGE_RATE}:1)
+      </span>
+      <div className="market-panel-row">
+        <select
+          value={from}
+          onChange={(event) => {
+            const next = event.target.value as ResourceKey;
+            setFrom(next);
+            if (next === to) setTo(EXCHANGE_RESOURCE_KEYS.find((key) => key !== next) ?? to);
+          }}
+          disabled={disabled}
+        >
+          {EXCHANGE_RESOURCE_KEYS.map((key) => (
+            <option key={key} value={key}>
+              {key}
+            </option>
+          ))}
+        </select>
+        <span aria-hidden="true">→</span>
+        <select
+          value={to}
+          onChange={(event) => setTo(event.target.value as ResourceKey)}
+          disabled={disabled}
+        >
+          {EXCHANGE_RESOURCE_KEYS.filter((key) => key !== from).map((key) => (
+            <option key={key} value={key}>
+              {key}
+            </option>
+          ))}
+        </select>
+        <input
+          type="number"
+          min={1}
+          value={amount}
+          onChange={(event) => setAmount(Math.max(1, Math.floor(Number(event.target.value) || 1)))}
+          disabled={disabled}
+        />
+        <button
+          onClick={() => onExchange(from, to, amount)}
+          disabled={disabled || !canAfford}
+          title={
+            !canAfford
+              ? `Not enough ${from} — need ${cost}.`
+              : `Spend ${cost} ${from} for ${amount} ${to}.`
+          }
+        >
+          Exchange
+        </button>
+      </div>
+      <span className="road-cost">Costs {cost} {from} for {amount} {to}.</span>
+    </div>
+  );
+}
+
 interface GameSettings {
   playerCount: number;
   boardSize: number;
@@ -189,6 +301,9 @@ interface GameSettings {
   aiEnabled: boolean;
   mapTheme: MapTheme;
   artStyle: 'classic' | 'isometric';
+  specialSkill: SpecialSkill;
+  startingResources: StartingResourceLevel;
+  fogOfWar: boolean;
 }
 
 const DEFAULT_SETTINGS: GameSettings = {
@@ -199,6 +314,9 @@ const DEFAULT_SETTINGS: GameSettings = {
   aiEnabled: true,
   mapTheme: 'random',
   artStyle: 'classic',
+  specialSkill: 'medicTroops',
+  startingResources: 'normal',
+  fogOfWar: true,
 };
 
 const MAP_THEME_DESCRIPTIONS: Record<MapTheme, string> = {
@@ -256,6 +374,11 @@ function SettingsScreen({ onStart }: { onStart: (settings: GameSettings) => void
   const [aiEnabled, setAiEnabled] = useState(DEFAULT_SETTINGS.aiEnabled);
   const [mapTheme, setMapTheme] = useState<MapTheme>(DEFAULT_SETTINGS.mapTheme);
   const [artStyle, setArtStyle] = useState<GameSettings['artStyle']>(DEFAULT_SETTINGS.artStyle);
+  const [specialSkill, setSpecialSkill] = useState<SpecialSkill>(DEFAULT_SETTINGS.specialSkill);
+  const [startingResources, setStartingResources] = useState<StartingResourceLevel>(
+    DEFAULT_SETTINGS.startingResources,
+  );
+  const [fogOfWar, setFogOfWar] = useState(DEFAULT_SETTINGS.fogOfWar);
   const [showHowToPlay, setShowHowToPlay] = useState(false);
 
   return (
@@ -318,6 +441,29 @@ function SettingsScreen({ onStart }: { onStart: (settings: GameSettings) => void
         )}
 
         <label className="settings-row">
+          <span>Special skill</span>
+          <select value={specialSkill} onChange={(event) => setSpecialSkill(event.target.value as SpecialSkill)}>
+            {(Object.keys(SPECIAL_SKILL_INFO) as SpecialSkill[]).map((skill) => (
+              <option key={skill} value={skill}>{SPECIAL_SKILL_INFO[skill].label}</option>
+            ))}
+          </select>
+        </label>
+        <p className="hint theme-hint">{SPECIAL_SKILL_INFO[specialSkill].description}</p>
+
+        <label className="settings-row">
+          <span>Starting resources</span>
+          <select
+            value={startingResources}
+            onChange={(event) => setStartingResources(event.target.value as StartingResourceLevel)}
+          >
+            <option value="low">Low (1 each)</option>
+            <option value="normal">Normal (2 each)</option>
+            <option value="high">High (4 each)</option>
+            <option value="deathmatch">Deathmatch (10 each)</option>
+          </select>
+        </label>
+
+        <label className="settings-row">
           <span>Resource nodes</span>
           <select value={nodeCount} onChange={(event) => setNodeCount(Number(event.target.value))}>
             <option value={3}>3 (scarce)</option>
@@ -325,6 +471,11 @@ function SettingsScreen({ onStart }: { onStart: (settings: GameSettings) => void
             <option value={8}>8 (plentiful)</option>
             <option value={12}>12 (abundant)</option>
           </select>
+        </label>
+
+        <label className="settings-row">
+          <span>Fog of war</span>
+          <input type="checkbox" checked={fogOfWar} onChange={(event) => setFogOfWar(event.target.checked)} />
         </label>
 
         <label className="settings-row">
@@ -349,7 +500,20 @@ function SettingsScreen({ onStart }: { onStart: (settings: GameSettings) => void
 
         <button
           className="primary"
-          onClick={() => onStart({ playerCount, boardSize, nodeCount, difficulty, aiEnabled, mapTheme, artStyle })}
+          onClick={() =>
+            onStart({
+              playerCount,
+              boardSize,
+              nodeCount,
+              difficulty,
+              aiEnabled,
+              mapTheme,
+              artStyle,
+              specialSkill,
+              startingResources,
+              fogOfWar,
+            })
+          }
         >
           Start game
         </button>
@@ -600,11 +764,18 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
               <li><strong>3. Act</strong> — move and/or attack with each of your units (most units can do one or the
                 other; cavalry and the hero can move then attack in the same turn).</li>
             </ol>
+            <h3>Choose one special skill</h3>
+            <ul className="howtoplay-list">
+              {(Object.keys(SPECIAL_SKILL_INFO) as SpecialSkill[]).map((skill) => (
+                <li key={skill}><strong>{SPECIAL_SKILL_INFO[skill].label}</strong> — {SPECIAL_SKILL_INFO[skill].description}</li>
+              ))}
+            </ul>
             <h3>Winning and losing</h3>
             <p>
-              Losing your <strong>main base</strong> eliminates you immediately. Settlements and other buildings can
-              be destroyed without eliminating you, but losing a settlement removes it as a spawn point. Buildings
-              connected by road back to your base slowly self-repair each turn.
+              Losing your <strong>main base</strong> normally eliminates you, but your closest surviving settlement
+              becomes the new base. Settlements and other buildings can be destroyed without eliminating you, but
+              losing a settlement removes it as a spawn point. Buildings connected by road back to your base slowly
+              self-repair each turn, and a nearby builder repairs the base by 1 HP per turn.
             </p>
           </div>
         )}
@@ -630,8 +801,9 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
                   const Icon = UNIT_ICONS[type];
                   const notes: string[] = [];
                   if (def.canMoveThenAttack) notes.push('Can move then attack in the same turn.');
-                  if (def.areaDamage) notes.push(`Splash: hits all enemies within ${def.areaRadius} tile(s) for ${def.areaDamage} on arrival.`);
-                  if (type === 'builder') notes.push('No attack. Founds settlements, raises towers/economy buildings, lays roads.');
+                  if (def.areaDamage) notes.push(`Splash: hits enemy units and buildings within ${def.areaRadius} tile(s) for ${def.areaDamage} on arrival.`);
+                  if (type === 'builder') notes.push('Normally no attack; Builder troops grants footsoldier attack stats.');
+                  if (type === 'cavalry') notes.push('Archer cavalry grants range 3.');
                   return (
                     <tr key={type}>
                       <td className="howtoplay-unit-cell"><Icon size={22} /> {UNIT_LABELS[type]}</td>
@@ -768,6 +940,8 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
     nodeCount: settings.nodeCount,
     seed: `${Date.now()}`,
     theme: settings.mapTheme,
+    specialSkill: settings.specialSkill,
+    startingResources: settings.startingResources,
   }));
   const activePlayer = getActivePlayer(state);
   const isSetupPhase = state.phase === 'setup';
@@ -793,7 +967,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
   const isAiTurn =
     !isSetupPhase && aiEnabled && aiPlayerIds.has(activePlayer.id) && !gameOver;
   const aiPlayer = aiEnabled && aiPlayerIds.has(activePlayer.id) ? activePlayer : null;
-  const fogEnabled = aiEnabled && state.players.length > 1;
+  const fogEnabled = settings.fogOfWar && state.players.length > 1;
   const humanViewerId = state.players[0]?.id;
   const [exploredTiles, setExploredTiles] = useState<Set<string>>(() =>
     fogEnabled && humanViewerId ? getVisibleTilesForPlayer(state, humanViewerId) : new Set(),
@@ -945,7 +1119,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
   const skippingBuild = phase === 'build' && unitsBuiltThisTurn === 0 && canStillBuild;
 
   const isUnitExhausted = (unit: { type: UnitType; hasMovedThisTurn: boolean; hasAttackedThisTurn: boolean }) => {
-    const def = UNIT_DEFS[unit.type];
+    const def = unitStatsForSkill(unit.type, activePlayer.specialSkill);
     const canStillMove = !unit.hasMovedThisTurn && (def.canMoveThenAttack || !unit.hasAttackedThisTurn);
     const canStillAttack = !unit.hasAttackedThisTurn && (def.canMoveThenAttack || !unit.hasMovedThisTurn);
     return !canStillMove && !canStillAttack;
@@ -990,6 +1164,9 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
   const towerBlocked = selectedBuilder
     ? towerBlockReason(state, activePlayerRef, selectedBuilder)
     : 'Select one of your builders first.';
+  const marketBlocked = selectedBuilder
+    ? marketBlockReason(state, activePlayerRef, selectedBuilder)
+    : 'Select one of your builders first.';
   const builderTerrain = selectedBuilder
     ? state.terrain[selectedBuilder.position.y]?.[selectedBuilder.position.x]
     : undefined;
@@ -1005,12 +1182,23 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
       : 'Select one of your builders first.',
   }));
 
+  // Whether the active player currently has a market standing, which unlocks
+  // the resource-exchange panel regardless of what is selected right now.
+  const hasMarket = state.bases.some(
+    (entry) => entry.ownerId === activePlayer.id && entry.kind === 'market',
+  );
+
   // When every builder job is blocked for the *same* reason ("already used its
   // turn", "standing on a resource node"), say it once above the buttons rather
   // than repeating the identical sentence under all five of them.
   const sharedBuilderBlock = (() => {
     if (!selectedBuilder) return null;
-    const reasons = [settlementBlocked, towerBlocked, ...economyChoices.map((choice) => choice.blocked)];
+    const reasons = [
+      settlementBlocked,
+      towerBlocked,
+      marketBlocked,
+      ...economyChoices.map((choice) => choice.blocked),
+    ];
     const first = reasons[0];
     return first && reasons.every((reason) => reason === first) ? first : null;
   })();
@@ -1146,6 +1334,36 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
       });
       setState({ ...next });
       setSelectedUnitId(null);
+    } catch (error) {
+      alert((error as Error).message);
+    }
+  };
+
+  const handleBuildMarket = () => {
+    if (!selectedBuilder) return;
+    try {
+      const next = applyAction(state, {
+        type: 'buildMarket',
+        playerId: activePlayer.id,
+        unitId: selectedBuilder.id,
+      });
+      setState({ ...next });
+      setSelectedUnitId(null);
+    } catch (error) {
+      alert((error as Error).message);
+    }
+  };
+
+  const handleExchangeResources = (from: ResourceKey, to: ResourceKey, amount: number) => {
+    try {
+      const next = applyAction(state, {
+        type: 'exchangeResources',
+        playerId: activePlayer.id,
+        from,
+        to,
+        amount,
+      });
+      setState({ ...next });
     } catch (error) {
       alert((error as Error).message);
     }
@@ -1451,7 +1669,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                       setBuildRoadMode(false);
                       setSelectedBuildType(unitType);
                     }}
-                    title={affordable ? unitTooltip(unitType) : `${unitTooltip(unitType)} — not enough resources`}
+                    title={affordable ? unitTooltip(unitType, activePlayer.specialSkill) : `${unitTooltip(unitType, activePlayer.specialSkill)} — not enough resources`}
                     draggable={!isAiTurn && !gameOver && affordable}
                     onDragStart={(event) => {
                       setBuildRoadMode(false);
@@ -1559,6 +1777,31 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
               {selectedBuilder && !sharedBuilderBlock && economyChoices.every((choice) => choice.blocked) && (
                 <p className="hint settlement-blocked">{economyChoices[0].blocked}</p>
               )}
+              <button
+                className={`settlement-button ${marketBlocked ? '' : 'ready'}`}
+                onClick={handleBuildMarket}
+                disabled={Boolean(marketBlocked) || isAiTurn || gameOver}
+                title={
+                  marketBlocked ??
+                  `Build a market here for ${costSummary(MARKET_COST)}. Lets you exchange resources at a ${MARKET_EXCHANGE_RATE}:1 ratio. Only one market may stand at a time. The builder survives but its turn is used up.`
+                }
+              >
+                <span className="icon">{isIsometric ? <IsoMarket size={20} team={activePlayer.color as TeamKey} /> : <MarketIcon size={20} team={activePlayer.color as TeamKey} />}</span>
+                <span className="settlement-button-text">
+                  <span className="settlement-button-label">Build market</span>
+                  <span className="road-cost">{costSummary(MARKET_COST)}</span>
+                </span>
+              </button>
+              {selectedBuilder && marketBlocked && !sharedBuilderBlock && (
+                <p className="hint settlement-blocked">{marketBlocked}</p>
+              )}
+              {hasMarket && (
+                <MarketExchangePanel
+                  resources={activePlayer.resources}
+                  disabled={isAiTurn || gameOver || !activePlayer.hasCollectedIncomeThisTurn}
+                  onExchange={handleExchangeResources}
+                />
+              )}
               {allUnitsExhausted && (
                 <p className="build-status build-status-done">
                   ✅ All your units have acted this turn. Click "End turn" when ready.
@@ -1596,8 +1839,8 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                   <button
                     className="unit-reference-card"
                     key={unitType}
-                    title={unitTooltip(unitType)}
-                    aria-label={unitTooltip(unitType)}
+                    title={unitTooltip(unitType, activePlayer.specialSkill)}
+                    aria-label={unitTooltip(unitType, activePlayer.specialSkill)}
                   >
                     <Icon size={30} team={activePlayer.color as TeamKey} />
                     <span>{UNIT_LABELS[unitType]}</span>
@@ -1714,6 +1957,44 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                 );
                 const node = tileVisible ? actualNode : undefined;
                 const road = tileVisible && state.roads.some((entry) => entry.x === x && entry.y === y);
+                const hasRoadOrAnchorAt = (rx: number, ry: number) =>
+                  state.roads.some((entry) => entry.x === rx && entry.y === ry) ||
+                  state.bases.some((entry) => entry.position.x === rx && entry.position.y === ry) ||
+                  state.units.some((entry) => entry.position.x === rx && entry.position.y === ry);
+                // Buildings and units are valid road endpoints too. Including
+                // them prevents a road from looking disconnected while it is
+                // being extended toward an anchor.
+                const roadConnections = {
+                  top: hasRoadOrAnchorAt(x, y - 1),
+                  right: hasRoadOrAnchorAt(x + 1, y),
+                  bottom: hasRoadOrAnchorAt(x, y + 1),
+                  left: hasRoadOrAnchorAt(x - 1, y),
+                };
+                const roadConnectionCount = Object.values(roadConnections).filter(Boolean).length;
+                const hasHorizontalConnection = roadConnections.left || roadConnections.right;
+                const hasVerticalConnection = roadConnections.top || roadConnections.bottom;
+                const isCornerConnection =
+                  roadConnectionCount === 2 &&
+                  hasHorizontalConnection &&
+                  hasVerticalConnection;
+                const roadSprite =
+                  roadConnectionCount >= 3
+                    ? 'crossroad'
+                    : isCornerConnection
+                      ? 'corner'
+                      : 'straight';
+                const roadRotation =
+                  roadSprite === 'corner'
+                    ? roadConnections.bottom && roadConnections.right
+                      ? 0
+                      : roadConnections.left && roadConnections.bottom
+                        ? 90
+                        : roadConnections.top && roadConnections.left
+                          ? 180
+                          : 270
+                    : roadSprite === 'straight' && hasVerticalConnection && !hasHorizontalConnection
+                      ? 90
+                      : 0;
                 const nodeOwner = node?.ownerId
                   ? state.players.find((p) => p.id === node.ownerId)
                   : null;
@@ -1737,6 +2018,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                 const isSettlement = base?.kind === 'settlement';
                 const isTower = base?.kind === 'tower';
                 const isEconomy = base?.kind === 'economy';
+                const isMarket = base?.kind === 'market';
                 const economyLabel =
                   isEconomy && base?.produces ? economyLabelFor(base.produces) : null;
                 const isCapturing = node ? capturingNodeKeys.has(`${x},${y}`) : false;
@@ -1752,13 +2034,15 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                       }${isCapturing ? '\n⏳ Changing hands: your unit claims this at end of turn.' : ''}`
                   : null;
                 const tileTitle = unit
-                  ? `${unitOwner?.name ?? ''} ${unitTooltip(unit.type)}\nHP: ${unit.hp}/${unit.maxHp}${
+                  ? `${unitOwner?.name ?? ''} ${unitTooltip(unit.type, unitOwner?.specialSkill)}\nHP: ${unit.hp}/${unit.maxHp}${
                       nodeSummary ? `\n\nStanding on a ${nodeSummary}` : ''
                     }`
                   : base
-                  ? `${baseOwner?.name ?? ''}'s ${economyLabel ?? (isTower ? 'sentry tower' : isSettlement ? 'settlement' : 'base')}\nHP: ${base.hp}/${base.maxHp}${
+                  ? `${baseOwner?.name ?? ''}'s ${economyLabel ?? (isMarket ? 'market' : isTower ? 'sentry tower' : isSettlement ? 'settlement' : 'base')}\nHP: ${base.hp}/${base.maxHp}${
                       isEconomy
                         ? `\nYields +${economyYieldOn(base.produces ?? 'food', terrain)} ${base.produces} every turn. Undefended.`
+                        : isMarket
+                        ? `\nLets its owner exchange resources at a ${MARKET_EXCHANGE_RATE}:1 ratio. Undefended.`
                         : isTower
                         ? `\nShoots the nearest enemy within ${TOWER_ATTACK_RANGE} tiles each turn.`
                         : isSettlement
@@ -1768,7 +2052,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                     : nodeSummary
                       ? nodeSummary
                       : road
-                        ? 'Road / bridge — movement is faster here and lake tiles are crossable'
+                        ? 'Road / bridge — stepping between two connected road/bridge tiles only costs half movement, and lake tiles are crossable'
                       : terrain === 'hills'
                         ? 'Hills — passable, but costs extra movement to cross'
                         : terrain === 'forest'
@@ -1800,7 +2084,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                 const tileBackground =
                   terrain === 'lake'
                     ? waterTile(x, y)
-                    : road
+                    : road && isIsometric
                       ? DIRT_TILE
                       : grassTile(x, y);
                 const isFogHidden = fogEnabled && !tileExplored;
@@ -1882,6 +2166,21 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                         )}
                       </span>
                     )}
+                    {road && !isBridge && !isIsometric && (
+                      <span
+                        className="terrain-overlay road-overlay"
+                        aria-label="Road"
+                        style={{ transform: `rotate(${roadRotation}deg)` }}
+                      >
+                        {roadSprite === 'crossroad' ? (
+                          <CrossroadIcon size={TILE_ART_SIZE} />
+                        ) : roadSprite === 'corner' ? (
+                          <RoadBottomToRightIcon size={TILE_ART_SIZE} />
+                        ) : (
+                          <RoadIcon size={TILE_ART_SIZE} />
+                        )}
+                      </span>
+                    )}
                     {overlayTerrain && !base && !unit && !node && (
                       <span className={`terrain-overlay ${isIsometric ? 'iso-structure' : ''}`}>
                         {(() => {
@@ -1950,18 +2249,20 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                     )}
                     {base && !unit && (
                       <span
-                        className={`base-icon ${isIsometric ? 'iso-structure' : ''} ${isSettlement ? 'settlement-icon' : ''} ${isTower ? 'tower-icon' : ''} ${isEconomy ? 'economy-icon' : ''}`}
+                        className={`base-icon ${isIsometric ? 'iso-structure' : ''} ${isSettlement ? 'settlement-icon' : ''} ${isTower ? 'tower-icon' : ''} ${isEconomy ? 'economy-icon' : ''} ${isMarket ? 'market-icon' : ''}`}
                         style={{ borderColor: PLAYER_BADGE_COLORS[baseOwner?.color ?? 'red'] }}
                       >
                         {isIsometric
                           ? (() => {
                               const IsoIcon = isEconomy
                                 ? ISO_ECONOMY_COMPONENTS[base.produces ?? 'food']
-                                : isTower
-                                  ? IsoTower
-                                  : isSettlement
-                                    ? IsoSettlement
-                                    : IsoBase;
+                                : isMarket
+                                  ? IsoMarket
+                                  : isTower
+                                    ? IsoTower
+                                    : isSettlement
+                                      ? IsoSettlement
+                                      : IsoBase;
                               return (
                                 <IsoIcon
                                   size={isoBuildingSize}
@@ -1974,6 +2275,8 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                             const Icon = ECONOMY_ICON_COMPONENTS[base.produces ?? 'food'];
                             return <Icon size={26} team={(baseOwner?.color ?? 'red') as TeamKey} />;
                           })()
+                        ) : isMarket ? (
+                          <MarketIcon size={26} team={(baseOwner?.color ?? 'red') as TeamKey} />
                         ) : isTower ? (
                           <TowerIcon size={26} team={(baseOwner?.color ?? 'red') as TeamKey} />
                         ) : isSettlement ? (
@@ -1996,11 +2299,13 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                         {(() => {
                           const Icon = isEconomy
                             ? ECONOMY_ICON_COMPONENTS[base.produces ?? 'food']
-                            : isTower
-                              ? TowerIcon
-                              : isSettlement
-                                ? SettlementIcon
-                                : BaseIcon;
+                            : isMarket
+                              ? MarketIcon
+                              : isTower
+                                ? TowerIcon
+                                : isSettlement
+                                  ? SettlementIcon
+                                  : BaseIcon;
                           return <Icon size={14} team={(baseOwner?.color ?? 'red') as TeamKey} />;
                         })()}
                       </span>
@@ -2029,7 +2334,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
             {state.players.map((player) => (
               <div
                 key={player.id}
-                className={`resource-card ${player.id === activePlayer.id ? 'active' : ''}`}
+                className={`resource-card ${player.id === activePlayer.id ? 'active' : ''} ${!player.alive ? 'eliminated' : ''}`}
                 style={{ borderColor: PLAYER_BADGE_COLORS[player.color] }}
               >
                 <div className="resource-card-header" style={{ background: PLAYER_BADGE_COLORS[player.color] }}>

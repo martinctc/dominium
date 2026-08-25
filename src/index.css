@@ -452,6 +452,54 @@ button:focus-visible,
 .settlement-blocked {
   color: #fca5a5;
 }
+.market-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  background: #1c1503;
+  color: #e5e7eb;
+}
+.market-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.market-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.market-panel-row select,
+.market-panel-row input {
+  background: #0f172a;
+  color: #e5e7eb;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+.market-panel-row input {
+  width: 56px;
+}
+.market-panel-row button {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #f59e0b;
+  background: #92400e;
+  color: #fef3c7;
+  cursor: pointer;
+  font-weight: 600;
+}
+.market-panel-row button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .unit-reference {
   background: rgba(30, 41, 59, 0.8);
   border-radius: 8px;
@@ -935,6 +983,14 @@ button:focus-visible,
 .terrain-overlay img {
   image-rendering: pixelated;
 }
+/* Roads and bridges are tile surfaces, not inset icons: let their classic
+   sprites reach every edge of the cell. Isometric bridges use their own SVG
+   geometry and keep the existing projection sizing. */
+.road-overlay svg,
+.bridge-overlay:not(.iso-bridge) svg {
+  width: 100%;
+  height: 100%;
+}
 .unit-icon, .base-icon {
   position: relative;
   z-index: 2;
@@ -950,6 +1006,8 @@ button:focus-visible,
 }
 .base-icon {
   font-size: 1.6rem;
+  width: 90%;
+  height: 90%;
 }
 .unit-icon.exhausted {
   filter: grayscale(0.85);
@@ -967,8 +1025,8 @@ button:focus-visible,
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 68%;
-  height: 68%;
+  width: 88%;
+  height: 88%;
   border-radius: 50%;
   border: 2px dashed rgba(250, 204, 21, 0.7);
   background: rgba(15, 23, 42, 0.4);
@@ -1094,6 +1152,10 @@ button:focus-visible,
 .resource-card.active {
   transform: translateY(-4px);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+.resource-card.eliminated {
+  filter: grayscale(1);
+  opacity: 0.52;
 }
 .resource-card-header {
   padding: 4px 12px;
