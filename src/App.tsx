@@ -1811,7 +1811,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
           )}
 
           <button
-            className={`primary ${skippingBuild ? 'primary-warn' : ''}`}
+            className={`primary turn-advance-button ${skippingBuild ? 'primary-warn' : ''}`}
             onClick={handleNextPhase}
             disabled={isSetupPhase || gameOver}
             title={
@@ -2182,7 +2182,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                       </span>
                     )}
                     {overlayTerrain && !base && !unit && !node && (
-                      <span className={`terrain-overlay ${isIsometric ? 'iso-structure' : ''}`}>
+                      <span className={`terrain-overlay terrain-${overlayTerrain}-overlay ${isIsometric ? 'iso-structure' : ''}`}>
                         {(() => {
                           if (isIsometric) {
                             const IsoIcon = ISO_TERRAIN_COMPONENTS[overlayTerrain];

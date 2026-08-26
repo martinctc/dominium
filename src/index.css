@@ -983,13 +983,19 @@ button:focus-visible,
 .terrain-overlay img {
   image-rendering: pixelated;
 }
-/* Roads and bridges are tile surfaces, not inset icons: let their classic
-   sprites reach every edge of the cell. Isometric bridges use their own SVG
-   geometry and keep the existing projection sizing. */
+/* Roads and bridges are tile surfaces: let their classic sprites reach every
+   edge of the cell. Mountains and hills are also terrain surfaces, but keep a
+   tiny inset so adjacent tiles still read cleanly. Isometric terrain uses its
+   own projected geometry and keeps the existing projection sizing. */
 .road-overlay svg,
 .bridge-overlay:not(.iso-bridge) svg {
   width: 100%;
   height: 100%;
+}
+.terrain-mountain-overlay:not(.iso-structure) svg,
+.terrain-hills-overlay:not(.iso-structure) svg {
+  width: 94%;
+  height: 94%;
 }
 .unit-icon, .base-icon {
   position: relative;
@@ -1450,14 +1456,58 @@ a.stats-toggle {
 }
 
 @media (max-width: 900px) {
+  .app-shell {
+    padding: 10px;
+    gap: 10px;
+    overflow: auto;
+  }
+  .top-bar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
   .main-row {
     flex-direction: column;
+    overflow-y: auto;
+    padding-bottom: 10px;
   }
   .hud {
+    order: 2;
     width: 100%;
+    max-height: none;
+    overflow: visible;
+    padding: 12px;
+  }
+  .board-column {
+    order: 1;
+    width: 100%;
+    flex: none;
+    align-items: stretch;
+  }
+  .board-panel {
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 4px;
   }
   .board {
-    width: min(92vw, 640px);
+    width: min(96vw, 640px);
+    margin: 0 auto;
+    flex: none;
+  }
+  .unit-picker button,
+  .income-buttons button,
+  .settlement-button,
+  .market-panel-row button,
+  .turn-advance-button {
+    min-height: 44px;
+  }
+  .turn-advance-button {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    box-shadow: 0 -8px 18px rgba(15, 23, 42, 0.45);
   }
 }
 
@@ -1475,5 +1525,8 @@ a.stats-toggle {
   }
   .resource-card {
     width: min(45vw, 220px);
+  }
+  .board {
+    width: min(96vw, 460px);
   }
 }
