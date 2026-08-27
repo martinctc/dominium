@@ -42,10 +42,10 @@ export function isBlockedByTerrain(state: GameState, position: Position) {
 /** Movement cost to step onto this tile: hills and forest are slow going (2), everything else
  * is normal (1). A road/bridge always normalizes the tile to cost 1, since it's paved
  * regardless of terrain — *unless* the step is travelling road-to-road, i.e. both the tile
- * being left and the tile being entered are paved, in which case it costs half (0.5). This
+ * being left and the tile being entered are paved, in which case it costs a quarter (0.25). This
  * rewards actually following a road/bridge rather than merely starting or ending on one. */
 function tileMoveCost(state: GameState, from: Position, to: Position): number {
-  if (hasRoad(state, from) && hasRoad(state, to)) return 0.5;
+  if (hasRoad(state, from) && hasRoad(state, to)) return 0.25;
   if (hasRoad(state, to)) return 1;
   const terrain = state.terrain[to.y]?.[to.x];
   return terrain === 'hills' || terrain === 'forest' ? 2 : 1;

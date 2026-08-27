@@ -37,6 +37,12 @@ export interface Player {
   /** Turn on which the player's main base was destroyed, or null while active. */
   eliminatedOnTurn: number | null;
   resources: Record<ResourceKey, number>;
+  /**
+   * Market research levels, one per resource. Each level adds
+   * ECONOMY_RESEARCH_BONUS to the per-turn yield of every economy building the
+   * player owns that produces that resource. Requires a standing market.
+   */
+  research: Record<ResourceKey, number>;
   hasCollectedIncomeThisTurn: boolean;
   homeZone: {
     x1: number;
@@ -76,6 +82,8 @@ export interface Base {
   position: Position;
   hp: number;
   maxHp: number;
+  /** Command radius level for the main base; settlements default to level 1. */
+  commandLevel?: number;
   /** Which resource this yields each turn. Only ever set for kind: 'economy'. */
   produces?: ResourceKey;
 }
@@ -128,7 +136,7 @@ export interface GameState {
   units: Unit[];
   actionLog: string[];
   resourceNodes: ResourceNode[];
-  /** Tiles with a built road/bridge: +1 effective movement speed, and lets units cross lakes. */
+  /** Tiles with a built road/bridge: connected road-to-road steps cost 0.25 movement, and bridges cross lakes. */
   roads: Position[];
   /** Which preset map style generated this board's terrain, for display purposes. */
   mapTheme: MapTheme;
@@ -225,6 +233,24 @@ export interface EndTurnAction {
   type: 'endTurn';
   playerId: string;
 }
+
+/**
+ * Buys the next research level for one resource at the owner's market. Each
+ * level permanently raises the per-turn yield of every economy building the
+ * player owns that produces that resource.
+ */
+export interface ResearchYieldAction {
+  type: 'researchYield';
+  playerId: string;
+  resource: ResourceKey;
+}
+
+/** Upgrades the player's main base command radius using a nearby builder. */
+export interface UpgradeBaseAction {
+  type: 'upgradeBase';
+  playerId: string;
+  unitId: string;
+}
 export type Action =
   | BuildAction
   | MoveAction
@@ -237,4 +263,6 @@ export type Action =
   | BuildTowerAction
   | BuildEconomyAction
   | BuildMarketAction
-  | ExchangeResourcesAction;
+  | ExchangeResourcesAction
+  | ResearchYieldAction
+  | UpgradeBaseAction;

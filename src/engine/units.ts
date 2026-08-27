@@ -2,6 +2,13 @@ import type { ResourceKey, SpecialSkill, TerrainType, Unit, UnitType } from './t
 
 export const BASE_MAX_HP = 40;
 
+/** Base command levels expand both local spawning and healing reach. */
+export const BASE_COMMAND_MAX_LEVEL = 3;
+export const BASE_COMMAND_UPGRADE_COSTS: Record<number, Record<ResourceKey, number>> = {
+  2: { food: 2, wood: 2, stone: 2 },
+  3: { food: 4, wood: 4, stone: 4 },
+};
+
 /** Settlements are cheaper and far more fragile than the main base. */
 export const SETTLEMENT_MAX_HP = 18;
 
@@ -75,6 +82,32 @@ export const MARKET_COST: Record<ResourceKey, number> = { food: 1, wood: 2, ston
 /** Resources spent per resource received when exchanging at a market. */
 export const MARKET_EXCHANGE_RATE = 2;
 
+/**
+ * Market research: a long-game economic investment.
+ *
+ * Each level permanently adds ECONOMY_RESEARCH_BONUS to the per-turn yield of
+ * every economy building the player owns producing that resource. Levels are
+ * capped so research supplements a spread-out economy rather than replacing
+ * the need to build and defend one, and the cost escalates per level so the
+ * second level is a genuine commitment rather than an automatic follow-up.
+ */
+export const ECONOMY_RESEARCH_BONUS = 1;
+export const RESEARCH_MAX_LEVEL = 2;
+
+/**
+ * Cost of buying the given research level (1-based). Charged in the *other*
+ * two resources, never the one being researched, mirroring how economy
+ * buildings never charge the resource they produce.
+ */
+export function researchCostFor(resource: ResourceKey, level: number): Record<ResourceKey, number> {
+  const amount = 2 * level;
+  const cost: Record<ResourceKey, number> = { food: 0, wood: 0, stone: 0 };
+  for (const key of RESOURCE_KEYS) {
+    if (key !== resource) cost[key] = amount;
+  }
+  return cost;
+}
+
 /** Human-readable name for an economy building yielding the given resource. */
 export function economyLabelFor(produces: ResourceKey): string {
   return ECONOMY_TYPES[produces]?.label ?? 'economy building';
@@ -85,10 +118,17 @@ export function economyCostFor(produces: ResourceKey): Record<ResourceKey, numbe
   return ECONOMY_TYPES[produces].cost;
 }
 
-/** Yield per turn for a building of this type standing on this terrain. */
-export function economyYieldOn(produces: ResourceKey, terrain: TerrainType | undefined): number {
+/**
+ * Yield per turn for a building of this type standing on this terrain, after
+ * its owner's market research for that resource.
+ */
+export function economyYieldOn(
+  produces: ResourceKey,
+  terrain: TerrainType | undefined,
+  researchLevel = 0,
+): number {
   const bonus = terrain === ECONOMY_TYPES[produces].terrain ? ECONOMY_TERRAIN_BONUS : 0;
-  return ECONOMY_YIELD_PER_TURN + bonus;
+  return ECONOMY_YIELD_PER_TURN + bonus + researchLevel * ECONOMY_RESEARCH_BONUS;
 }
 
 export const RESOURCE_KEYS: ResourceKey[] = ['food', 'wood', 'stone'];

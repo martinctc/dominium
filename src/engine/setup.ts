@@ -636,6 +636,7 @@ export function createPlayer(
     alive: true,
     eliminatedOnTurn: null,
     resources: { food: startingResources, wood: startingResources, stone: startingResources },
+    research: { food: 0, wood: 0, stone: 0 },
     hasCollectedIncomeThisTurn: false,
     homeZone: zone,
     stats: {

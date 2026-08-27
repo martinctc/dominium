@@ -3,7 +3,11 @@ import type { ReactNode } from 'react';
 import {
   applyAction,
   canBuildAtPosition,
+  baseUpgradeBlockReason,
+  BASE_COMMAND_MAX_LEVEL,
+  BASE_COMMAND_UPGRADE_COSTS,
   canPlaceBaseAt,
+  chebyshevDistance,
   createInitialState,
   getActivePlayer,
   getLegalBasePositions,
@@ -29,13 +33,20 @@ import {
   MARKET_MAX_HP,
   MARKET_EXCHANGE_RATE,
   marketBlockReason,
+  ECONOMY_RESEARCH_BONUS,
+  RESEARCH_MAX_LEVEL,
+  researchCostFor,
+  researchBlockReason,
   LUMP_SUM_BONUS,
   ONGOING_BONUS_PER_TURN,
   settlementBlockReason,
   getPlayerById,
+  getCommandRadius,
+  isSuppliedByMainBase,
   getReachableTiles,
   getUnitById,
   getVisibleTilesForPlayer,
+  hasLineOfSight,
   UNIT_DEFS,
   unitStatsForSkill,
   BASE_MAX_HP,
@@ -223,12 +234,18 @@ const EXCHANGE_RESOURCE_KEYS: ResourceKey[] = ['food', 'wood', 'stone'];
  */
 function MarketExchangePanel({
   resources,
+  research,
+  researchBlocked,
   disabled,
   onExchange,
+  onResearch,
 }: {
   resources: Record<ResourceKey, number>;
+  research: Record<ResourceKey, number>;
+  researchBlocked: Record<ResourceKey, string | null>;
   disabled: boolean;
   onExchange: (from: ResourceKey, to: ResourceKey, amount: number) => void;
+  onResearch: (resource: ResourceKey) => void;
 }) {
   const [from, setFrom] = useState<ResourceKey>('food');
   const [to, setTo] = useState<ResourceKey>('wood');
@@ -289,6 +306,45 @@ function MarketExchangePanel({
         </button>
       </div>
       <span className="road-cost">Costs {cost} {from} for {amount} {to}.</span>
+
+      <span className="market-panel-title market-research-title">
+        🔬 Yield research
+      </span>
+      <p className="hint">
+        Each level permanently adds +{ECONOMY_RESEARCH_BONUS} per turn to every one of your
+        buildings producing that resource.
+      </p>
+      <div className="market-research-list">
+        {EXCHANGE_RESOURCE_KEYS.map((resource) => {
+          const level = research[resource];
+          const maxed = level >= RESEARCH_MAX_LEVEL;
+          const blocked = researchBlocked[resource];
+          const nextCost = researchCostFor(resource, level + 1);
+          return (
+            <button
+              key={resource}
+              className="market-research-button"
+              onClick={() => onResearch(resource)}
+              disabled={disabled || Boolean(blocked)}
+              title={
+                blocked ??
+                `Spend ${costSummary(nextCost)} to raise ${resource} yield to level ${level + 1}.`
+              }
+            >
+              <span className="market-research-label">
+                {economyLabelFor(resource)}
+                <span className="market-research-level">
+                  {'★'.repeat(level)}
+                  {'☆'.repeat(RESEARCH_MAX_LEVEL - level)}
+                </span>
+              </span>
+              <span className="road-cost">
+                {maxed ? 'Fully researched' : costSummary(nextCost)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -366,6 +422,103 @@ function SettingsBackdrop() {
   );
 }
 
+/**
+ * A labelled range input for ordinal settings (player count, board size).
+ * Sliders beat dropdowns here: the range is small and continuous, so the
+ * player can feel the scale rather than opening a menu to read four options.
+ */
+function SliderRow({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  display,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  display: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="settings-row settings-slider-row">
+      <div className="settings-slider-head">
+        <span>{label}</span>
+        <span className="settings-slider-value">{display}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        aria-label={label}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </div>
+  );
+}
+
+/** A row of mutually exclusive buttons, for short categorical settings. */
+function SegmentedRow<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: Array<{ value: T; label: string }>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="settings-row settings-segmented-row">
+      <span>{label}</span>
+      <div className="settings-segmented" role="group" aria-label={label}>
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={option.value === value ? 'selected' : ''}
+            aria-pressed={option.value === value}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Slider positions for the ordinal starting-resource levels. */
+const STARTING_RESOURCE_ORDER: StartingResourceLevel[] = ['low', 'normal', 'high', 'deathmatch'];
+const STARTING_RESOURCE_LABELS: Record<StartingResourceLevel, string> = {
+  low: 'Low — 1 each',
+  normal: 'Normal — 2 each',
+  high: 'High — 4 each',
+  deathmatch: 'Deathmatch — 10 each',
+};
+
+/** Describes how crowded the board feels at a given resource-node count. */
+function nodeCountLabel(count: number): string {
+  if (count <= 3) return `${count} — scarce`;
+  if (count <= 6) return `${count} — standard`;
+  if (count <= 9) return `${count} — plentiful`;
+  return `${count} — abundant`;
+}
+
+const BOARD_SIZE_LABELS: Record<number, string> = {
+  8: 'small',
+  10: 'standard',
+  12: 'large',
+  14: 'huge',
+};
+
 function SettingsScreen({ onStart }: { onStart: (settings: GameSettings) => void }) {
   const [playerCount, setPlayerCount] = useState(DEFAULT_SETTINGS.playerCount);
   const [boardSize, setBoardSize] = useState(DEFAULT_SETTINGS.boardSize);
@@ -399,104 +552,121 @@ function SettingsScreen({ onStart }: { onStart: (settings: GameSettings) => void
           🐞 Report a bug / feedback
         </a>
 
-        <label className="settings-row">
-          <span>Players</span>
-          <select value={playerCount} onChange={(event) => setPlayerCount(Number(event.target.value))}>
-            <option value={2}>2</option>
-            <option value={3}>3</option>
-            <option value={4}>4</option>
-          </select>
-        </label>
-
-        <label className="settings-row">
-          <span>Map size</span>
-          <select value={boardSize} onChange={(event) => setBoardSize(Number(event.target.value))}>
-            <option value={8}>8 x 8 (small)</option>
-            <option value={10}>10 x 10 (standard)</option>
-            <option value={12}>12 x 12 (large)</option>
-            <option value={14}>14 x 14 (huge)</option>
-          </select>
-        </label>
-
-        <label className="settings-row">
-          <span>Map theme</span>
-          <select value={mapTheme} onChange={(event) => setMapTheme(event.target.value as MapTheme)}>
-            <option value="random">Random</option>
-            <option value="river">River</option>
-            <option value="hills">Hills</option>
-            <option value="oasis">Oasis</option>
-          </select>
-        </label>
-        <p className="hint theme-hint">{MAP_THEME_DESCRIPTIONS[mapTheme]}</p>
-
-        <label className="settings-row">
-          <span>Art style</span>
-          <select value={artStyle} onChange={(event) => setArtStyle(event.target.value as GameSettings['artStyle'])}>
-            <option value="classic">Classic pixel art</option>
-            <option value="isometric">2.5D view</option>
-          </select>
-        </label>
-        {artStyle === 'isometric' && (
-          <p className="hint theme-hint">Diamond tiles with depth and raised buildings and units.</p>
-        )}
-
-        <label className="settings-row">
-          <span>Special skill</span>
-          <select value={specialSkill} onChange={(event) => setSpecialSkill(event.target.value as SpecialSkill)}>
-            {(Object.keys(SPECIAL_SKILL_INFO) as SpecialSkill[]).map((skill) => (
-              <option key={skill} value={skill}>{SPECIAL_SKILL_INFO[skill].label}</option>
-            ))}
-          </select>
-        </label>
-        <p className="hint theme-hint">{SPECIAL_SKILL_INFO[specialSkill].description}</p>
-
-        <label className="settings-row">
-          <span>Starting resources</span>
-          <select
-            value={startingResources}
-            onChange={(event) => setStartingResources(event.target.value as StartingResourceLevel)}
-          >
-            <option value="low">Low (1 each)</option>
-            <option value="normal">Normal (2 each)</option>
-            <option value="high">High (4 each)</option>
-            <option value="deathmatch">Deathmatch (10 each)</option>
-          </select>
-        </label>
-
-        <label className="settings-row">
-          <span>Resource nodes</span>
-          <select value={nodeCount} onChange={(event) => setNodeCount(Number(event.target.value))}>
-            <option value={3}>3 (scarce)</option>
-            <option value={5}>5 (standard)</option>
-            <option value={8}>8 (plentiful)</option>
-            <option value={12}>12 (abundant)</option>
-          </select>
-        </label>
-
-        <label className="settings-row">
-          <span>Fog of war</span>
-          <input type="checkbox" checked={fogOfWar} onChange={(event) => setFogOfWar(event.target.checked)} />
-        </label>
-
-        <label className="settings-row">
-          <span>AI opponents</span>
-          <input
-            type="checkbox"
-            checked={aiEnabled}
-            onChange={(event) => setAiEnabled(event.target.checked)}
+        <div className="settings-section">
+          <h2 className="settings-section-title">Match</h2>
+          <SliderRow
+            label="Players"
+            value={playerCount}
+            min={2}
+            max={4}
+            display={`${playerCount} players`}
+            onChange={setPlayerCount}
           />
-        </label>
+          <SliderRow
+            label="Starting resources"
+            value={STARTING_RESOURCE_ORDER.indexOf(startingResources)}
+            min={0}
+            max={STARTING_RESOURCE_ORDER.length - 1}
+            display={STARTING_RESOURCE_LABELS[startingResources]}
+            onChange={(index) => setStartingResources(STARTING_RESOURCE_ORDER[index])}
+          />
+          <SegmentedRow
+            label="Special skill"
+            value={specialSkill}
+            options={(Object.keys(SPECIAL_SKILL_INFO) as SpecialSkill[]).map((skill) => ({
+              value: skill,
+              label: SPECIAL_SKILL_INFO[skill].label,
+            }))}
+            onChange={setSpecialSkill}
+          />
+          <p className="hint theme-hint">{SPECIAL_SKILL_INFO[specialSkill].description}</p>
+        </div>
 
-        {aiEnabled && (
-          <label className="settings-row">
-            <span>Difficulty</span>
-            <select value={difficulty} onChange={(event) => setDifficulty(event.target.value as AiDifficulty)}>
-              <option value="easy">Easy</option>
-              <option value="normal">Normal</option>
-              <option value="hard">Hard</option>
-            </select>
+        <div className="settings-section">
+          <h2 className="settings-section-title">Map</h2>
+          <SliderRow
+            label="Map size"
+            value={boardSize}
+            min={8}
+            max={14}
+            step={2}
+            display={`${boardSize} × ${boardSize} — ${BOARD_SIZE_LABELS[boardSize] ?? 'custom'}`}
+            onChange={setBoardSize}
+          />
+          <SliderRow
+            label="Resource nodes"
+            value={nodeCount}
+            min={3}
+            max={12}
+            display={nodeCountLabel(nodeCount)}
+            onChange={setNodeCount}
+          />
+          <SegmentedRow
+            label="Theme"
+            value={mapTheme}
+            options={[
+              { value: 'random', label: 'Random' },
+              { value: 'river', label: 'River' },
+              { value: 'hills', label: 'Hills' },
+              { value: 'oasis', label: 'Oasis' },
+            ]}
+            onChange={setMapTheme}
+          />
+          <p className="hint theme-hint">{MAP_THEME_DESCRIPTIONS[mapTheme]}</p>
+          <label className="settings-row settings-toggle-row">
+            <span>Fog of war</span>
+            <input type="checkbox" checked={fogOfWar} onChange={(event) => setFogOfWar(event.target.checked)} />
           </label>
-        )}
+          <p className="hint theme-hint">
+            {fogOfWar
+              ? 'You only see tiles near your own units and buildings.'
+              : 'The whole map is visible to everyone from the start.'}
+          </p>
+        </div>
+
+        <div className="settings-section">
+          <h2 className="settings-section-title">Opponents</h2>
+          <label className="settings-row settings-toggle-row">
+            <span>AI opponents</span>
+            <input
+              type="checkbox"
+              checked={aiEnabled}
+              onChange={(event) => setAiEnabled(event.target.checked)}
+            />
+          </label>
+          {aiEnabled ? (
+            <SegmentedRow
+              label="Difficulty"
+              value={difficulty}
+              options={[
+                { value: 'easy', label: 'Easy' },
+                { value: 'normal', label: 'Normal' },
+                { value: 'hard', label: 'Hard' },
+              ]}
+              onChange={setDifficulty}
+            />
+          ) : (
+            <p className="hint theme-hint">Every player takes their turn on this device (hot-seat).</p>
+          )}
+        </div>
+
+        <div className="settings-section">
+          <h2 className="settings-section-title">Presentation</h2>
+          <SegmentedRow
+            label="Art style"
+            value={artStyle}
+            options={[
+              { value: 'classic', label: 'Classic pixel art' },
+              { value: 'isometric', label: '2.5D view' },
+            ]}
+            onChange={setArtStyle}
+          />
+          <p className="hint theme-hint">
+            {artStyle === 'isometric'
+              ? 'Diamond tiles with depth and raised buildings and units.'
+              : 'Flat top-down grid with 16×16 pixel sprites.'}
+          </p>
+        </div>
 
         <button
           className="primary"
@@ -527,12 +697,35 @@ function sumResources(bucket: Record<ResourceKey, number>): number {
   return bucket.food + bucket.wood + bucket.stone;
 }
 
+function economyPoints(state: GameState, player: GameState['players'][number]): number {
+  const buildings = state.bases.filter((base) => base.ownerId === player.id);
+  const economyBuildings = buildings.filter((base) => base.kind === 'economy').length;
+  const heldNodes = state.resourceNodes.filter((node) => node.ownerId === player.id).length;
+  const researchLevels = sumResources(player.research);
+  return sumResources(player.resources) + economyBuildings * 4 + heldNodes * 3 + researchLevels * 3;
+}
+
+function militaryPoints(state: GameState, player: GameState['players'][number]): number {
+  const units = state.units.filter((unit) => unit.ownerId === player.id);
+  const structures = state.bases.filter((base) => base.ownerId === player.id);
+  const unitScore = units.reduce((total, unit) => total + unit.maxHp + unit.attack * 2 + unit.attackRange, 0);
+  const buildingScore = structures.reduce((total, base) => (
+    total + (base.kind === 'base' ? 10 : base.kind === 'tower' ? 8 : base.kind === 'settlement' ? 3 : 0)
+  ), 0);
+  return unitScore + buildingScore;
+}
+
 function StatsPanel({ state, onClose }: { state: GameState; onClose: () => void }) {
   const [statsPage, setStatsPage] = useState<'overview' | 'battle'>('overview');
   const maxTurn = state.timeline.reduce((max, entry) => Math.max(max, entry.turn), 0);
   const chartWidth = 320;
   const chartHeight = 120;
   const battleLog = state.actionLog.filter((entry) => /hit|shot|destroyed|area attack/i.test(entry));
+  const rankedPlayers = [...state.players].sort((a, b) => {
+    const totalDifference =
+      economyPoints(state, b) + militaryPoints(state, b) - economyPoints(state, a) - militaryPoints(state, a);
+    return totalDifference || a.name.localeCompare(b.name);
+  });
 
   const toPoints = (values: Array<{ turn: number; value: number }>, maxValue: number) =>
     values
@@ -575,32 +768,54 @@ function StatsPanel({ state, onClose }: { state: GameState; onClose: () => void 
           <thead>
             <tr>
               <th>Player</th>
+              <th title="Current resources, economy buildings, held nodes and research">Economy points</th>
+              <th title="Living units and military buildings">Military points</th>
+              <th>Total points</th>
               <th>Status</th>
               <th>Nodes captured</th>
               <th>Built 🏘️/🗼/🌾</th>
-              <th>Collected (f/w/s)</th>
-              <th>Spent (f/w/s)</th>
+              <th>Collected food</th>
+              <th>Collected wood</th>
+              <th>Collected stone</th>
+              <th>Spent food</th>
+              <th>Spent wood</th>
+              <th>Spent stone</th>
               <th>Total collected</th>
               <th>Total spent</th>
             </tr>
           </thead>
           <tbody>
-            {state.players.map((player) => (
+            {rankedPlayers.map((player) => (
               <tr key={player.id}>
                 <td>
                   <span className="stats-player-dot" style={{ background: PLAYER_BADGE_COLORS[player.color] }} />
                   {player.name}
                 </td>
+                <td>{economyPoints(state, player)}</td>
+                <td>{militaryPoints(state, player)}</td>
+                <td><strong>{economyPoints(state, player) + militaryPoints(state, player)}</strong></td>
                 <td>{player.alive ? 'Active' : `Eliminated (turn ${player.eliminatedOnTurn ?? '?'})`}</td>
                 <td>{player.stats.nodesCaptured}</td>
                 <td>
                   {player.stats.settlementsFounded}/{player.stats.towersBuilt}/{player.stats.economyBuilt}
                 </td>
                 <td>
-                  {player.stats.incomeCollected.food}/{player.stats.incomeCollected.wood}/{player.stats.incomeCollected.stone}
+                  {player.stats.incomeCollected.food}
                 </td>
                 <td>
-                  {player.stats.resourcesSpent.food}/{player.stats.resourcesSpent.wood}/{player.stats.resourcesSpent.stone}
+                  {player.stats.incomeCollected.wood}
+                </td>
+                <td>
+                  {player.stats.incomeCollected.stone}
+                </td>
+                <td>
+                  {player.stats.resourcesSpent.food}
+                </td>
+                <td>
+                  {player.stats.resourcesSpent.wood}
+                </td>
+                <td>
+                  {player.stats.resourcesSpent.stone}
                 </td>
                 <td>{sumResources(player.stats.incomeCollected)}</td>
                 <td>{sumResources(player.stats.resourcesSpent)}</td>
@@ -608,6 +823,10 @@ function StatsPanel({ state, onClose }: { state: GameState; onClose: () => void 
             ))}
           </tbody>
           </table>
+          <p className="hint">
+            Players are ranked by total points. Economy points combine current resources, economy buildings,
+            held nodes and research; military points combine living units and military buildings.
+          </p>
 
           <h3>Population &amp; economy comparison</h3>
         {state.timeline.length === 0 ? (
@@ -791,7 +1010,9 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
                   <th>Move</th>
                   <th>Attack</th>
                   <th>Range</th>
-                  <th>Cost (f/w/s)</th>
+                  <th>Food</th>
+                  <th>Wood</th>
+                  <th>Stone</th>
                   <th>Notes</th>
                 </tr>
               </thead>
@@ -811,7 +1032,9 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
                       <td>{def.moveRange}</td>
                       <td>{def.attack || '—'}</td>
                       <td>{def.attackRange || '—'}</td>
-                      <td>{def.cost.food}/{def.cost.wood}/{def.cost.stone}</td>
+                      <td>{def.cost.food}</td>
+                      <td>{def.cost.wood}</td>
+                      <td>{def.cost.stone}</td>
                       <td>{notes.join(' ') || '—'}</td>
                     </tr>
                   );
@@ -828,7 +1051,9 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
                 <tr>
                   <th>Building</th>
                   <th>HP</th>
-                  <th>Cost (f/w/s)</th>
+                  <th>Food</th>
+                  <th>Wood</th>
+                  <th>Stone</th>
                   <th>What it does</th>
                 </tr>
               </thead>
@@ -837,18 +1062,27 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
                   <td className="howtoplay-unit-cell"><BaseIcon size={22} /> Base</td>
                   <td>{BASE_MAX_HP}</td>
                   <td>—</td>
-                  <td>Your main base. Placed at setup. Destroying it eliminates that player.</td>
+                  <td>—</td>
+                  <td>—</td>
+                  <td>
+                    Your main base. Placed at setup. Destroying it eliminates that player. A nearby builder can
+                    expand its command radius to level {BASE_COMMAND_MAX_LEVEL}, increasing spawning and healing reach.
+                  </td>
                 </tr>
                 <tr>
                   <td className="howtoplay-unit-cell"><SettlementIcon size={22} /> Settlement</td>
                   <td>{SETTLEMENT_MAX_HP}</td>
-                  <td>{SETTLEMENT_COST.food}/{SETTLEMENT_COST.wood}/{SETTLEMENT_COST.stone}</td>
+                  <td>{SETTLEMENT_COST.food}</td>
+                  <td>{SETTLEMENT_COST.wood}</td>
+                  <td>{SETTLEMENT_COST.stone}</td>
                   <td>Founded by a builder, which is consumed in the process. Acts as an extra spot to build new units.</td>
                 </tr>
                 <tr>
                   <td className="howtoplay-unit-cell"><TowerIcon size={22} /> Sentry tower</td>
                   <td>{TOWER_MAX_HP}</td>
-                  <td>{TOWER_COST.food}/{TOWER_COST.wood}/{TOWER_COST.stone}</td>
+                  <td>{TOWER_COST.food}</td>
+                  <td>{TOWER_COST.wood}</td>
+                  <td>{TOWER_COST.stone}</td>
                   <td>Raised by a builder, who survives. Fires automatically every turn at any enemy within {TOWER_ATTACK_RANGE} tiles for {TOWER_ATTACK} damage.</td>
                 </tr>
                 {(['food', 'wood', 'stone'] as ResourceKey[]).map((resource) => {
@@ -858,7 +1092,9 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
                     <tr key={resource}>
                       <td className="howtoplay-unit-cell"><Icon size={22} /> {info.label[0].toUpperCase()}{info.label.slice(1)}</td>
                       <td>{ECONOMY_MAX_HP}</td>
-                      <td>{info.cost.food}/{info.cost.wood}/{info.cost.stone}</td>
+                      <td>{info.cost.food}</td>
+                      <td>{info.cost.wood}</td>
+                      <td>{info.cost.stone}</td>
                       <td>
                         Raised by a builder, who survives. Yields {ECONOMY_YIELD_PER_TURN} {resource}/turn (+{ECONOMY_TERRAIN_BONUS} more
                         on {info.terrain} terrain) every income phase, no choice required.
@@ -866,6 +1102,19 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
                     </tr>
                   );
                 })}
+                <tr>
+                  <td className="howtoplay-unit-cell"><MarketIcon size={22} /> Market</td>
+                  <td>{MARKET_MAX_HP}</td>
+                  <td>{MARKET_COST.food}</td>
+                  <td>{MARKET_COST.wood}</td>
+                  <td>{MARKET_COST.stone}</td>
+                  <td>
+                    Raised by a builder, who survives. Only one at a time. Trade any resource for another at{' '}
+                    {MARKET_EXCHANGE_RATE}:1, and buy yield research: each level permanently adds{' '}
+                    +{ECONOMY_RESEARCH_BONUS}/turn to every one of your economy buildings producing that resource,
+                    up to level {RESEARCH_MAX_LEVEL}. Research is kept even if the market is destroyed.
+                  </td>
+                </tr>
               </tbody>
             </table>
             <p className="hint">Settlements, towers and economy buildings can't be placed right next to another of the same kind.</p>
@@ -880,7 +1129,8 @@ function HowToPlayModal({ onClose }: { onClose: () => void }) {
               <li><strong>Lakes</strong> — impassable, unless a bridge has been built across ({ROAD_COST} wood).</li>
               <li><strong>Hills / forest</strong> — passable, but cost extra movement. Economy buildings placed on their
                 matching terrain (forest for lumber camps, hills for quarries) yield extra resources.</li>
-              <li><strong>Roads</strong> — built by a builder for {ROAD_COST} wood, they speed up movement and let connected buildings self-repair.</li>
+              <li><strong>Roads</strong> — built by a builder for {ROAD_COST} wood, they speed up movement, let connected buildings self-repair,
+                and extend the main base's command radius to connected settlements.</li>
             </ul>
             <h3>Resource nodes</h3>
             <p>
@@ -1091,6 +1341,19 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
 
   const selectedUnit = selectedUnitId ? getUnitById(state, selectedUnitId) : null;
   const reachableTiles = selectedUnit ? getReachableTiles(state, selectedUnit) : [];
+  const attackRangeTiles = selectedUnit
+    ? Array.from({ length: state.height }, (_, y) =>
+        Array.from({ length: state.width }, (_, x) => ({ x, y })),
+      )
+        .flat()
+        .filter(
+          (position) =>
+            selectedUnit.attackRange > 0 &&
+            (position.x !== selectedUnit.position.x || position.y !== selectedUnit.position.y) &&
+            chebyshevDistance(selectedUnit.position, position) <= selectedUnit.attackRange &&
+            hasLineOfSight(state, selectedUnit.position, position),
+        )
+    : [];
   const legalBuildPositions =
     !isSetupPhase && phase === 'build'
       ? getLegalBuildPositions(state, getPlayerById(state, activePlayer.id))
@@ -1167,6 +1430,9 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
   const marketBlocked = selectedBuilder
     ? marketBlockReason(state, activePlayerRef, selectedBuilder)
     : 'Select one of your builders first.';
+  const baseUpgradeBlocked = selectedBuilder
+    ? baseUpgradeBlockReason(state, activePlayerRef, selectedBuilder)
+    : 'Select one of your builders next to your main base.';
   const builderTerrain = selectedBuilder
     ? state.terrain[selectedBuilder.position.y]?.[selectedBuilder.position.x]
     : undefined;
@@ -1176,7 +1442,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
     produces,
     label: economyLabelFor(produces),
     cost: economyCostFor(produces),
-    perTurn: economyYieldOn(produces, builderTerrain),
+    perTurn: economyYieldOn(produces, builderTerrain, activePlayerRef.research[produces]),
     blocked: selectedBuilder
       ? economyBlockReason(state, activePlayerRef, selectedBuilder, produces)
       : 'Select one of your builders first.',
@@ -1187,6 +1453,21 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
   const hasMarket = state.bases.some(
     (entry) => entry.ownerId === activePlayer.id && entry.kind === 'market',
   );
+  const activeMainBase = state.bases.find(
+    (entry) => entry.ownerId === activePlayer.id && entry.kind === 'base',
+  );
+  const commandLevel = activeMainBase?.commandLevel ?? 1;
+  const nextCommandCost = BASE_COMMAND_UPGRADE_COSTS[commandLevel + 1];
+
+  // Per-resource reason the next research level is unavailable, or null when
+  // it can be bought. Computed here so the market panel stays presentational.
+  const researchBlocked = (Object.keys(ECONOMY_TYPES) as ResourceKey[]).reduce(
+    (acc, resource) => {
+      acc[resource] = researchBlockReason(state, activePlayerRef, resource);
+      return acc;
+    },
+    {} as Record<ResourceKey, string | null>,
+  );
 
   // When every builder job is blocked for the *same* reason ("already used its
   // turn", "standing on a resource node"), say it once above the buttons rather
@@ -1194,6 +1475,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
   const sharedBuilderBlock = (() => {
     if (!selectedBuilder) return null;
     const reasons = [
+      baseUpgradeBlocked,
       settlementBlocked,
       towerBlocked,
       marketBlocked,
@@ -1224,7 +1506,11 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
       for (const building of state.bases) {
         if (building.ownerId !== player.id || building.kind !== 'economy' || !building.produces) continue;
         const terrain = state.terrain[building.position.y]?.[building.position.x];
-        income[building.produces] += economyYieldOn(building.produces, terrain);
+        income[building.produces] += economyYieldOn(
+          building.produces,
+          terrain,
+          player.research[building.produces],
+        );
       }
       return [player.id, income];
     }),
@@ -1354,6 +1640,20 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
     }
   };
 
+  const handleUpgradeBase = () => {
+    if (!selectedBuilder) return;
+    try {
+      const next = applyAction(state, {
+        type: 'upgradeBase',
+        playerId: activePlayer.id,
+        unitId: selectedBuilder.id,
+      });
+      setState({ ...next });
+    } catch (error) {
+      alert((error as Error).message);
+    }
+  };
+
   const handleExchangeResources = (from: ResourceKey, to: ResourceKey, amount: number) => {
     try {
       const next = applyAction(state, {
@@ -1362,6 +1662,19 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
         from,
         to,
         amount,
+      });
+      setState({ ...next });
+    } catch (error) {
+      alert((error as Error).message);
+    }
+  };
+
+  const handleResearchYield = (resource: ResourceKey) => {
+    try {
+      const next = applyAction(state, {
+        type: 'researchYield',
+        playerId: activePlayer.id,
+        resource,
       });
       setState({ ...next });
     } catch (error) {
@@ -1547,6 +1860,11 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
     setSelectedIncome(resource);
   };
 
+  // Whose special skill the top bar advertises. During setup that is the player
+  // currently placing a base; afterwards it is whoever is taking their turn, so
+  // the pill always describes the units the player is about to command.
+  const skillOnShow = (isSetupPhase ? setupPlayer : activePlayer)?.specialSkill ?? settings.specialSkill;
+
   return (
     <div className="app-shell">
       <header className="top-bar">
@@ -1572,6 +1890,12 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
             🤖 Players 2+ are AI ({settings.difficulty})
           </label>
           {!isSetupPhase && <span className="turn-pill">⏱️ Turn {state.turn}</span>}
+          <span
+            className="skill-pill"
+            title={`${SPECIAL_SKILL_INFO[skillOnShow].label} — ${SPECIAL_SKILL_INFO[skillOnShow].description}`}
+          >
+            ✨ {SPECIAL_SKILL_INFO[skillOnShow].label}
+          </span>
           <span className="phase-pill">
             {gameOver
               ? 'Game over'
@@ -1707,6 +2031,26 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
               <p className="hint">Click a unit to select it, then click a highlighted tile to move, or an enemy to attack.</p>
               {sharedBuilderBlock && <p className="hint settlement-blocked">{sharedBuilderBlock}</p>}
               <button
+                className={`settlement-button ${baseUpgradeBlocked ? '' : 'ready'}`}
+                onClick={handleUpgradeBase}
+                disabled={Boolean(baseUpgradeBlocked) || isAiTurn || gameOver}
+                title={
+                  baseUpgradeBlocked ??
+                  `Expand your base command radius to ${commandLevel + 1} for ${costSummary(nextCommandCost!)}. This increases spawning and healing reach.`
+                }
+              >
+                <span className="icon"><BaseIcon size={20} team={activePlayer.color as TeamKey} /></span>
+                <span className="settlement-button-text">
+                  <span className="settlement-button-label">Expand base scope</span>
+                  <span className="road-cost">
+                    {commandLevel >= BASE_COMMAND_MAX_LEVEL ? 'Fully expanded' : `${costSummary(nextCommandCost!)} · level ${commandLevel + 1}`}
+                  </span>
+                </span>
+              </button>
+              {selectedBuilder && baseUpgradeBlocked && !sharedBuilderBlock && (
+                <p className="hint settlement-blocked">{baseUpgradeBlocked}</p>
+              )}
+              <button
                 className={`settlement-button ${settlementBlocked ? '' : 'ready'}`}
                 onClick={handleFoundSettlement}
                 disabled={Boolean(settlementBlocked) || isAiTurn || gameOver}
@@ -1798,8 +2142,11 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
               {hasMarket && (
                 <MarketExchangePanel
                   resources={activePlayer.resources}
+                  research={activePlayer.research}
+                  researchBlocked={researchBlocked}
                   disabled={isAiTurn || gameOver || !activePlayer.hasCollectedIncomeThisTurn}
                   onExchange={handleExchangeResources}
+                  onResearch={handleResearchYield}
                 />
               )}
               {allUnitsExhausted && (
@@ -1913,6 +2260,12 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
 
         <div className="board-column">
           <main className="board-panel">
+            {selectedUnit && (
+              <div className="range-legend" aria-label="Selected unit ranges">
+                <span><i className="range-swatch move" /> Move range</span>
+                {selectedUnit.attackRange > 0 && <span><i className="range-swatch attack" /> Attack range</span>}
+              </div>
+            )}
             <div
               className={`board ${isIsometric ? 'isometric-board' : ''}`}
               style={{
@@ -1999,6 +2352,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                   ? state.players.find((p) => p.id === node.ownerId)
                   : null;
                 const isReachable = reachableTiles.some((tile) => tile.x === x && tile.y === y);
+                const isAttackRange = attackRangeTiles.some((tile) => tile.x === x && tile.y === y);
                 const isSelected = selectedUnitId && unit && unit.id === selectedUnitId;
                 const isFlashing = tileVisible ? flashTiles[tileKey] : undefined;
                 const isLegalBuildTile =
@@ -2019,6 +2373,9 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                 const isTower = base?.kind === 'tower';
                 const isEconomy = base?.kind === 'economy';
                 const isMarket = base?.kind === 'market';
+                const commandRadius = base && (base.kind === 'base' || base.kind === 'settlement')
+                  ? getCommandRadius(state, base)
+                  : null;
                 const economyLabel =
                   isEconomy && base?.produces ? economyLabelFor(base.produces) : null;
                 const isCapturing = node ? capturingNodeKeys.has(`${x},${y}`) : false;
@@ -2040,19 +2397,19 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                   : base
                   ? `${baseOwner?.name ?? ''}'s ${economyLabel ?? (isMarket ? 'market' : isTower ? 'sentry tower' : isSettlement ? 'settlement' : 'base')}\nHP: ${base.hp}/${base.maxHp}${
                       isEconomy
-                        ? `\nYields +${economyYieldOn(base.produces ?? 'food', terrain)} ${base.produces} every turn. Undefended.`
+                        ? `\nYields +${economyYieldOn(base.produces ?? 'food', terrain, baseOwner?.research[base.produces ?? 'food'] ?? 0)} ${base.produces} every turn. Undefended.`
                         : isMarket
                         ? `\nLets its owner exchange resources at a ${MARKET_EXCHANGE_RATE}:1 ratio. Undefended.`
                         : isTower
                         ? `\nShoots the nearest enemy within ${TOWER_ATTACK_RANGE} tiles each turn.`
                         : isSettlement
-                          ? '\nSpawns units. Losing it does not lose the game.'
+                          ? `\nSpawns units within ${commandRadius} tile${commandRadius === 1 ? '' : 's'}${isSuppliedByMainBase(state, base) ? ' (supplied)' : ''}. Losing it does not lose the game.`
                           : '\nLose this and you are out.'
-                    }${nodeSummary ? `\n\nBuilt on a ${nodeSummary}` : ''}`
+                    }${base.kind === 'base' ? `\nCommand radius: ${commandRadius} tile${commandRadius === 1 ? '' : 's'} for spawning; healing reaches one tile farther.` : ''}${nodeSummary ? `\n\nBuilt on a ${nodeSummary}` : ''}`
                     : nodeSummary
                       ? nodeSummary
                       : road
-                        ? 'Road / bridge — stepping between two connected road/bridge tiles only costs half movement, and lake tiles are crossable'
+                        ? 'Road / bridge — stepping between connected road/bridge tiles costs 0.25 movement, and lake tiles are crossable'
                       : terrain === 'hills'
                         ? 'Hills — passable, but costs extra movement to cross'
                         : terrain === 'forest'
@@ -2103,6 +2460,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                       'tile',
                       terrain,
                       isReachable ? 'reachable' : '',
+                      isAttackRange ? 'attack-range' : '',
                       isSelected ? 'selected' : '',
                       isFlashing === 'damage' ? 'hit-flash' : '',
                       isFlashing === 'capture' ? 'capture-flash' : '',
