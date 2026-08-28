@@ -674,7 +674,7 @@ describe('roads and bridges', () => {
     expect(player.resources.wood).toBe(initialWood - 2);
   });
 
-  it('allows roads to pass underneath the player own buildings', () => {
+  it('allows roads to pass underneath the player\'s own buildings', () => {
     const state = makeStateWithBases();
     const player = state.players[0];
     applyAction(state, {
