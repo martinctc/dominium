@@ -1430,9 +1430,11 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
   const marketBlocked = selectedBuilder
     ? marketBlockReason(state, activePlayerRef, selectedBuilder)
     : 'Select one of your builders first.';
-  const baseUpgradeBlocked = selectedBuilder
-    ? baseUpgradeBlockReason(state, activePlayerRef, selectedBuilder)
-    : 'Select one of your builders next to your main base.';
+  const baseUpgradeBlocked = !activePlayer.hasCollectedIncomeThisTurn
+    ? 'Collect income before upgrading your main base.'
+    : selectedBuilder
+      ? baseUpgradeBlockReason(state, activePlayerRef, selectedBuilder)
+      : 'Select one of your builders next to your main base.';
   const builderTerrain = selectedBuilder
     ? state.terrain[selectedBuilder.position.y]?.[selectedBuilder.position.x]
     : undefined;
