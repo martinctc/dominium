@@ -1354,6 +1354,8 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
             hasLineOfSight(state, selectedUnit.position, position),
         )
     : [];
+  const reachableTileKeys = new Set(reachableTiles.map((tile) => `${tile.x}:${tile.y}`));
+  const attackRangeTileKeys = new Set(attackRangeTiles.map((tile) => `${tile.x}:${tile.y}`));
   const legalBuildPositions =
     !isSetupPhase && phase === 'build'
       ? getLegalBuildPositions(state, getPlayerById(state, activePlayer.id))
@@ -2353,8 +2355,8 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                 const nodeOwner = node?.ownerId
                   ? state.players.find((p) => p.id === node.ownerId)
                   : null;
-                const isReachable = reachableTiles.some((tile) => tile.x === x && tile.y === y);
-                const isAttackRange = attackRangeTiles.some((tile) => tile.x === x && tile.y === y);
+                const isReachable = reachableTileKeys.has(`${x}:${y}`);
+                const isAttackRange = attackRangeTileKeys.has(`${x}:${y}`);
                 const isSelected = selectedUnitId && unit && unit.id === selectedUnitId;
                 const isFlashing = tileVisible ? flashTiles[tileKey] : undefined;
                 const isLegalBuildTile =
