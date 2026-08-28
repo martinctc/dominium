@@ -47,7 +47,7 @@ import {
 import { chebyshevDistance } from '../src/engine/los.js';
 import { getReachableTiles, isPassableTerrain } from '../src/engine/pathfinding.js';
 import { getVisibleTilesForPlayer, hasLineOfSight } from '../src/engine/los.js';
-import type { GameState, ResourceKey, TerrainType } from '../src/engine/types.js';
+import type { Base, GameState, ResourceKey, TerrainType } from '../src/engine/types.js';
 
 /** Total of a food/wood/stone record, for the resource-accounting invariants. */
 function sumRecord(record: Record<ResourceKey, number>): number {
@@ -980,6 +980,47 @@ describe('builders and settlements', () => {
     expect(closeSettlement.kind).toBe('base');
     expect(farSettlement.kind).toBe('settlement');
     expect(player.alive).toBe(true);
+  });
+
+  it('resets the promoted settlement to command level 1 rather than inheriting the old upgrades', () => {
+    const state = makeStateWithBases();
+    state.resourceNodes = [];
+    const player = state.players[1];
+    const enemy = state.players[0];
+    const oldBase = state.bases[1];
+    oldBase.hp = 1;
+    oldBase.commandLevel = 3;
+    const settlement: Base = {
+      id: 'heir-settlement',
+      ownerId: player.id,
+      kind: 'settlement' as const,
+      position: { x: oldBase.position.x - 2, y: oldBase.position.y },
+      hp: 12,
+      maxHp: 18,
+    };
+    state.bases.push(settlement);
+    const attacker = makeUnit(enemy.id, 'cannon', {
+      x: oldBase.position.x - 1,
+      y: oldBase.position.y,
+    });
+    state.units.push(attacker);
+
+    applyAction(state, {
+      type: 'attack',
+      playerId: enemy.id,
+      unitId: attacker.id,
+      targetBaseId: oldBase.id,
+    });
+
+    expect(settlement.kind).toBe('base');
+    expect(settlement.commandLevel).toBe(1);
+    expect(getCommandRadius(state, settlement)).toBe(1);
+    // The spawn ring shrinks back to one tile around the new base.
+    expect(
+      getLegalBuildPositions(state, player).some(
+        (tile) => chebyshevDistance(tile, settlement.position) > 1,
+      ),
+    ).toBe(false);
   });
 });
 

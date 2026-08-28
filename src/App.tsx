@@ -43,6 +43,7 @@ import {
   getPlayerById,
   getCommandRadius,
   isSuppliedByMainBase,
+  getSuppliedStructureIds,
   getReachableTiles,
   getUnitById,
   getVisibleTilesForPlayer,
@@ -1356,6 +1357,12 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
     : [];
   const reachableTileKeys = new Set(reachableTiles.map((tile) => `${tile.x}:${tile.y}`));
   const attackRangeTileKeys = new Set(attackRangeTiles.map((tile) => `${tile.x}:${tile.y}`));
+  // One road BFS per player per render, shared by every base tooltip below.
+  // Calling getCommandRadius/isSuppliedByMainBase bare inside the board loop
+  // would re-run that BFS for each settlement on the map.
+  const suppliedIdsByPlayer = new Map(
+    state.players.map((player) => [player.id, getSuppliedStructureIds(state, player.id)] as const),
+  );
   const legalBuildPositions =
     !isSetupPhase && phase === 'build'
       ? getLegalBuildPositions(state, getPlayerById(state, activePlayer.id))
@@ -2377,8 +2384,9 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                 const isTower = base?.kind === 'tower';
                 const isEconomy = base?.kind === 'economy';
                 const isMarket = base?.kind === 'market';
+                const suppliedIds = base ? suppliedIdsByPlayer.get(base.ownerId) : undefined;
                 const commandRadius = base && (base.kind === 'base' || base.kind === 'settlement')
-                  ? getCommandRadius(state, base)
+                  ? getCommandRadius(state, base, suppliedIds)
                   : null;
                 const economyLabel =
                   isEconomy && base?.produces ? economyLabelFor(base.produces) : null;
@@ -2407,7 +2415,7 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
                         : isTower
                         ? `\nShoots the nearest enemy within ${TOWER_ATTACK_RANGE} tiles each turn.`
                         : isSettlement
-                          ? `\nSpawns units within ${commandRadius} tile${commandRadius === 1 ? '' : 's'}${isSuppliedByMainBase(state, base) ? ' (supplied)' : ''}. Losing it does not lose the game.`
+                          ? `\nSpawns units within ${commandRadius} tile${commandRadius === 1 ? '' : 's'}${isSuppliedByMainBase(state, base, suppliedIds) ? ' (supplied)' : ''}. Losing it does not lose the game.`
                           : '\nLose this and you are out.'
                     }${base.kind === 'base' ? `\nCommand radius: ${commandRadius} tile${commandRadius === 1 ? '' : 's'} for spawning; healing reaches one tile farther.` : ''}${nodeSummary ? `\n\nBuilt on a ${nodeSummary}` : ''}`
                     : nodeSummary

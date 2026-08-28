@@ -33,10 +33,18 @@ export function getPlayerById(state: GameState, playerId: string): Player {
   return player;
 }
 
-/** Returns whether a building has a continuous road connection to its owner's main base. */
-function isRoadConnectedToMainBase(state: GameState, building: Base): boolean {
-  const mainBase = getMainBase(state, building.ownerId);
-  if (!mainBase || building.id === mainBase.id || state.roads.length === 0) return false;
+/**
+ * Every tile reachable from a player's main base by walking their road network,
+ * as `"x:y"` keys. The main base's own tile seeds the search, so a building
+ * standing directly beside the base counts as connected.
+ *
+ * This is the expensive half of a supply-line check (a BFS over `state.roads`),
+ * so callers that need to test more than one building should compute it once and
+ * pass it around rather than calling `isRoadConnectedToMainBase` in a loop.
+ */
+function reachableRoadKeys(state: GameState, playerId: string): Set<string> {
+  const mainBase = getMainBase(state, playerId);
+  if (!mainBase || state.roads.length === 0) return new Set();
 
   const roadKeys = new Set(state.roads.map((road) => `${road.x}:${road.y}`));
   const reached = new Set<string>([`${mainBase.position.x}:${mainBase.position.y}`]);
@@ -54,7 +62,11 @@ function isRoadConnectedToMainBase(state: GameState, building: Base): boolean {
       }
     }
   }
+  return reached;
+}
 
+/** Whether any of the building's own tile or its eight neighbours is on the road network. */
+function touchesRoadNetwork(building: Base, reached: Set<string>): boolean {
   for (let dy = -1; dy <= 1; dy += 1) {
     for (let dx = -1; dx <= 1; dx += 1) {
       if (reached.has(`${building.position.x + dx}:${building.position.y + dy}`)) return true;
@@ -63,11 +75,42 @@ function isRoadConnectedToMainBase(state: GameState, building: Base): boolean {
   return false;
 }
 
+/**
+ * The ids of every structure the player has that the main base can supply: the
+ * main base itself, plus each settlement joined to it by a continuous road.
+ *
+ * Prefer this over repeated `isRoadConnectedToMainBase` calls — it runs the road
+ * BFS once for the whole player instead of once per building.
+ */
+export function getSuppliedStructureIds(state: GameState, playerId: string): Set<string> {
+  const supplied = new Set<string>();
+  const mainBase = getMainBase(state, playerId);
+  if (!mainBase) return supplied;
+  supplied.add(mainBase.id);
+  if (state.roads.length === 0) return supplied;
+
+  const reached = reachableRoadKeys(state, playerId);
+  for (const building of state.bases) {
+    if (building.ownerId !== playerId || building.id === mainBase.id) continue;
+    if (touchesRoadNetwork(building, reached)) supplied.add(building.id);
+  }
+  return supplied;
+}
+
+/** Returns whether a building has a continuous road connection to its owner's main base. */
+function isRoadConnectedToMainBase(state: GameState, building: Base): boolean {
+  const mainBase = getMainBase(state, building.ownerId);
+  if (!mainBase || building.id === mainBase.id || state.roads.length === 0) return false;
+  return touchesRoadNetwork(building, reachableRoadKeys(state, building.ownerId));
+}
+
 /** Repairs one HP on each damaged non-base building supplied by the road network. */
 function repairConnectedBuildings(state: GameState, player: Player): void {
+  const supplied = getSuppliedStructureIds(state, player.id);
+  const mainBase = getMainBase(state, player.id);
   for (const building of state.bases) {
     if (building.ownerId !== player.id || building.hp >= building.maxHp) continue;
-    if (!isRoadConnectedToMainBase(state, building)) continue;
+    if (building.id === mainBase?.id || !supplied.has(building.id)) continue;
     building.hp = Math.min(building.maxHp, building.hp + 1);
     state.actionLog.push(`🔧 ${player.name}'s ${buildingLabel(building)} repairs 1 HP via the road network.`);
   }
@@ -122,19 +165,29 @@ export function buildingLabel(building: Base): string {
  * keeps its normal radius until a road connects it to the owner's main base;
  * then it projects the main base's upgraded command reach.
  */
-export function getCommandRadius(state: GameState, structure: Base): number {
+export function getCommandRadius(
+  state: GameState,
+  structure: Base,
+  suppliedIds?: Set<string>,
+): number {
   if (structure.kind === 'base') return structure.commandLevel ?? 1;
   if (structure.kind !== 'settlement') return 0;
-  const mainBase = getMainBase(state, structure.ownerId);
-  return mainBase && isRoadConnectedToMainBase(state, structure)
-    ? mainBase.commandLevel ?? 1
-    : 1;
+  if (!isSuppliedByMainBase(state, structure, suppliedIds)) return 1;
+  return getMainBase(state, structure.ownerId)?.commandLevel ?? 1;
 }
 
-export function isSuppliedByMainBase(state: GameState, structure: Base): boolean {
-  return structure.kind === 'base' || (
-    structure.kind === 'settlement' && isRoadConnectedToMainBase(state, structure)
-  );
+/**
+ * Pass `suppliedIds` from {@link getSuppliedStructureIds} when testing several
+ * structures in one pass; without it each call re-runs the road BFS.
+ */
+export function isSuppliedByMainBase(
+  state: GameState,
+  structure: Base,
+  suppliedIds?: Set<string>,
+): boolean {
+  if (structure.kind === 'base') return true;
+  if (structure.kind !== 'settlement') return false;
+  return suppliedIds ? suppliedIds.has(structure.id) : isRoadConnectedToMainBase(state, structure);
 }
 
 export function getUnitById(state: GameState, unitId: string): Unit {
@@ -318,9 +371,13 @@ function applyAreaDamage(
       replacement.kind = 'base';
       replacement.maxHp = BASE_MAX_HP;
       replacement.hp = Math.min(replacement.hp, replacement.maxHp);
+      // A promoted settlement starts at the default command radius. Set this
+      // explicitly rather than leaving it undefined: the upgrades bought for the
+      // old base are lost with it, and the log below tells the player so.
+      replacement.commandLevel = 1;
       defender.baseId = replacement.id;
       state.actionLog.push(
-        `🏰 ${defender.name}'s base was destroyed. Their closest settlement became the new base.`,
+        `🏰 ${defender.name}'s base was destroyed. Their closest settlement became the new base, at command radius 1.`,
       );
       continue;
     }
@@ -346,11 +403,18 @@ function applyHeroArrivalSplash(state: GameState, player: Player, hero: Unit): v
 function healUnitsNearBase(state: GameState, player: Player): void {
   const structures = getSpawnStructures(state, player.id);
   if (structures.length === 0) return;
+  // Resolve each structure's healing reach once. Doing it inside the unit loop
+  // would re-run the supply-line BFS for every unit/structure pair.
+  const suppliedIds = getSuppliedStructureIds(state, player.id);
+  const healRanges = structures.map((structure) => ({
+    position: structure.position,
+    range: getCommandRadius(state, structure, suppliedIds) + 1,
+  }));
   for (const unit of state.units) {
     if (unit.ownerId !== player.id) continue;
     if (unit.hp >= unit.maxHp) continue;
-    const nearStructure = structures.some(
-      (structure) => chebyshevDistance(unit.position, structure.position) <= getCommandRadius(state, structure) + 1,
+    const nearStructure = healRanges.some(
+      (structure) => chebyshevDistance(unit.position, structure.position) <= structure.range,
     );
     if (!nearStructure) continue;
     unit.hp = Math.min(unit.maxHp, unit.hp + HEAL_AMOUNT);
@@ -510,10 +574,11 @@ export function canPlaceBaseAt(state: GameState, position: Position, player?: Pl
 /** Units may be built within the command radius of the player's logistical buildings. */
 export function getLegalBuildPositions(state: GameState, player: Player): Position[] {
   const structures = getSpawnStructures(state, player.id);
+  const suppliedIds = getSuppliedStructureIds(state, player.id);
   const legalPositions: Position[] = [];
   const seen = new Set<string>();
   for (const structure of structures) {
-    const radius = getCommandRadius(state, structure);
+    const radius = getCommandRadius(state, structure, suppliedIds);
     for (let y = structure.position.y - radius; y <= structure.position.y + radius; y += 1) {
       for (let x = structure.position.x - radius; x <= structure.position.x + radius; x += 1) {
         if (x < 0 || y < 0 || x >= state.width || y >= state.height) continue;
