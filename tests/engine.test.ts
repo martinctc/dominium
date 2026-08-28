@@ -8,23 +8,36 @@ import {
 } from '../src/engine/setup.js';
 import {
   applyAction,
+  advanceTurn,
+  baseUpgradeBlockReason,
   canBuildEconomy,
   canUnitAttack,
   economyBlockReason,
   getLegalBasePositions,
   getLegalBuildPositions,
+  getCommandRadius,
   getLegalRoadPositions,
   getSpawnStructures,
   LUMP_SUM_BONUS,
+  marketBlockReason,
+  researchBlockReason,
   towerBlockReason,
 } from '../src/engine/reducer.js';
 import {
+  ECONOMY_RESEARCH_BONUS,
   ECONOMY_TERRAIN_BONUS,
   ECONOMY_YIELD_PER_TURN,
+  BASE_COMMAND_MAX_LEVEL,
+  BASE_COMMAND_UPGRADE_COSTS,
   economyCostFor,
   economyLabelFor,
   economyYieldOn,
   makeUnit,
+  MARKET_COST,
+  MARKET_EXCHANGE_RATE,
+  RESEARCH_MAX_LEVEL,
+  researchCostFor,
+  RESOURCE_KEYS,
   SETTLEMENT_COST,
   TOWER_ATTACK,
   TOWER_COST,
@@ -34,7 +47,7 @@ import {
 import { chebyshevDistance } from '../src/engine/los.js';
 import { getReachableTiles, isPassableTerrain } from '../src/engine/pathfinding.js';
 import { getVisibleTilesForPlayer, hasLineOfSight } from '../src/engine/los.js';
-import type { GameState, ResourceKey, TerrainType } from '../src/engine/types.js';
+import type { Base, GameState, ResourceKey, TerrainType } from '../src/engine/types.js';
 
 /** Total of a food/wood/stone record, for the resource-accounting invariants. */
 function sumRecord(record: Record<ResourceKey, number>): number {
@@ -661,6 +674,18 @@ describe('roads and bridges', () => {
     expect(player.resources.wood).toBe(initialWood - 2);
   });
 
+  it('allows roads to pass underneath the player\'s own buildings', () => {
+    const state = makeStateWithBases();
+    const player = state.players[0];
+    applyAction(state, {
+      type: 'buildRoad',
+      playerId: player.id,
+      position: { x: 1, y: 1 },
+    });
+
+    expect(state.roads).toContainEqual({ x: 1, y: 1 });
+  });
+
   it('allows a unit to enter a lake tile when a bridge is built there', () => {
     const state = makeStateWithBases();
     const player = state.players[0];
@@ -679,8 +704,8 @@ describe('roads and bridges', () => {
     expect(state.roads).toContainEqual({ x: 2, y: 2 });
     expect(getReachableTiles(state, unit)).toContainEqual({ x: 2, y: 2 });
 
-    // Extend the road further so travelling along the connected network is
-    // discounted (each road-to-road step costs half movement).
+    // Extend the road further so travelling along the connected network uses
+    // the long-distance road discount.
     applyAction(state, {
       type: 'buildRoad',
       playerId: player.id,
@@ -691,9 +716,16 @@ describe('roads and bridges', () => {
       playerId: player.id,
       position: { x: 4, y: 2 },
     });
+    for (let x = 5; x <= 9; x += 1) {
+      applyAction(state, {
+        type: 'buildRoad',
+        playerId: player.id,
+        position: { x, y: 2 },
+      });
+    }
 
     unit.position = { x: 2, y: 2 };
-    expect(getReachableTiles(state, unit)).toContainEqual({ x: 4, y: 2 });
+    expect(getReachableTiles(state, unit)).toContainEqual({ x: 9, y: 2 });
   });
 
   it('requires income, wood, and a legal adjacent position', () => {
@@ -948,6 +980,47 @@ describe('builders and settlements', () => {
     expect(closeSettlement.kind).toBe('base');
     expect(farSettlement.kind).toBe('settlement');
     expect(player.alive).toBe(true);
+  });
+
+  it('resets the promoted settlement to command level 1 rather than inheriting the old upgrades', () => {
+    const state = makeStateWithBases();
+    state.resourceNodes = [];
+    const player = state.players[1];
+    const enemy = state.players[0];
+    const oldBase = state.bases[1];
+    oldBase.hp = 1;
+    oldBase.commandLevel = 3;
+    const settlement: Base = {
+      id: 'heir-settlement',
+      ownerId: player.id,
+      kind: 'settlement' as const,
+      position: { x: oldBase.position.x - 2, y: oldBase.position.y },
+      hp: 12,
+      maxHp: 18,
+    };
+    state.bases.push(settlement);
+    const attacker = makeUnit(enemy.id, 'cannon', {
+      x: oldBase.position.x - 1,
+      y: oldBase.position.y,
+    });
+    state.units.push(attacker);
+
+    applyAction(state, {
+      type: 'attack',
+      playerId: enemy.id,
+      unitId: attacker.id,
+      targetBaseId: oldBase.id,
+    });
+
+    expect(settlement.kind).toBe('base');
+    expect(settlement.commandLevel).toBe(1);
+    expect(getCommandRadius(state, settlement)).toBe(1);
+    // The spawn ring shrinks back to one tile around the new base.
+    expect(
+      getLegalBuildPositions(state, player).some(
+        (tile) => chebyshevDistance(tile, settlement.position) > 1,
+      ),
+    ).toBe(false);
   });
 });
 
@@ -1529,6 +1602,198 @@ describe('forest terrain and economy buildings', () => {
     applyAction(state, { type: 'income', playerId: player.id, resource: 'wood' });
     expect(player.resources.food).toBe(foodBefore);
   });
+});
+
+describe('market and yield research', () => {
+  /** A state where player 1 has a standing market and a builder to spare. */
+  function makeStateWithMarket() {
+    const state = makeStateWithBases();
+    const player = state.players[0];
+    const builder = makeUnit(player.id, 'builder', { x: 5, y: 5 });
+    state.units.push(builder);
+    applyAction(state, { type: 'buildMarket', playerId: player.id, unitId: builder.id });
+    return { state, player };
+  }
+
+  it('raises a market for its cost, keeping the builder alive but spent', () => {
+    const state = makeStateWithBases();
+    const player = state.players[0];
+    const builder = makeUnit(player.id, 'builder', { x: 5, y: 5 });
+    state.units.push(builder);
+    const before = { ...player.resources };
+
+    applyAction(state, { type: 'buildMarket', playerId: player.id, unitId: builder.id });
+
+    const market = state.bases.find((base) => base.kind === 'market');
+    expect(market?.ownerId).toBe(player.id);
+    expect(state.units.find((unit) => unit.id === builder.id)).toBeDefined();
+    expect(builder.hasMovedThisTurn).toBe(true);
+    for (const key of RESOURCE_KEYS) {
+      expect(player.resources[key]).toBe(before[key] - MARKET_COST[key]);
+    }
+  });
+
+  it('allows only one market per player at a time', () => {
+    const { state, player } = makeStateWithMarket();
+    const second = makeUnit(player.id, 'builder', { x: 3, y: 7 });
+    state.units.push(second);
+    expect(marketBlockReason(state, player, second)).toMatch(/only have one market/i);
+  });
+
+  it('exchanges resources at the market rate', () => {
+    const { state, player } = makeStateWithMarket();
+    const foodBefore = player.resources.food;
+    const woodBefore = player.resources.wood;
+
+    applyAction(state, {
+      type: 'exchangeResources',
+      playerId: player.id,
+      from: 'food',
+      to: 'wood',
+      amount: 2,
+    });
+
+    expect(player.resources.food).toBe(foodBefore - 2 * MARKET_EXCHANGE_RATE);
+    expect(player.resources.wood).toBe(woodBefore + 2);
+  });
+
+  it('needs a market before any research can be bought', () => {
+    const state = makeStateWithBases();
+    const player = state.players[0];
+    expect(researchBlockReason(state, player, 'food')).toMatch(/need a market/i);
+    expect(() =>
+      applyAction(state, { type: 'researchYield', playerId: player.id, resource: 'food' }),
+    ).toThrow(/need a market/i);
+  });
+
+  it('charges the escalating cost in the other two resources only', () => {
+    const { state, player } = makeStateWithMarket();
+    const before = { ...player.resources };
+
+    applyAction(state, { type: 'researchYield', playerId: player.id, resource: 'stone' });
+
+    expect(player.research.stone).toBe(1);
+    // Never charges the resource being researched.
+    expect(player.resources.stone).toBe(before.stone);
+    expect(player.resources.food).toBe(before.food - researchCostFor('stone', 1).food);
+    expect(player.resources.wood).toBe(before.wood - researchCostFor('stone', 1).wood);
+    // Level 2 costs strictly more than level 1.
+    expect(sumRecord(researchCostFor('stone', 2))).toBeGreaterThan(
+      sumRecord(researchCostFor('stone', 1)),
+    );
+  });
+
+  it('raises the per-turn yield of every matching economy building', () => {
+    const { state, player } = makeStateWithMarket();
+    state.terrain[3][3] = 'plain';
+    const farmer = makeUnit(player.id, 'builder', { x: 3, y: 3 });
+    state.units.push(farmer);
+    applyAction(state, { type: 'buildEconomy', playerId: player.id, unitId: farmer.id, produces: 'food' });
+
+    const unresearched = economyYieldOn('food', 'plain', player.research.food);
+    applyAction(state, { type: 'researchYield', playerId: player.id, resource: 'food' });
+    expect(economyYieldOn('food', 'plain', player.research.food)).toBe(
+      unresearched + ECONOMY_RESEARCH_BONUS,
+    );
+
+    player.hasCollectedIncomeThisTurn = false;
+    const foodBefore = player.resources.food;
+    applyAction(state, { type: 'income', playerId: player.id, resource: 'wood' });
+    // Farm on its home terrain (plain), plus one research level.
+    expect(player.resources.food).toBe(
+      foodBefore + ECONOMY_YIELD_PER_TURN + ECONOMY_TERRAIN_BONUS + ECONOMY_RESEARCH_BONUS,
+    );
+  });
+
+  it('caps research at the maximum level', () => {
+    const { state, player } = makeStateWithMarket();
+    player.resources = { food: 99, wood: 99, stone: 99 };
+
+    for (let level = 0; level < RESEARCH_MAX_LEVEL; level += 1) {
+      applyAction(state, { type: 'researchYield', playerId: player.id, resource: 'wood' });
+    }
+    expect(player.research.wood).toBe(RESEARCH_MAX_LEVEL);
+    expect(researchBlockReason(state, player, 'wood')).toMatch(/fully researched/i);
+    expect(() =>
+      applyAction(state, { type: 'researchYield', playerId: player.id, resource: 'wood' }),
+    ).toThrow(/fully researched/i);
+  });
+
+  it('does not apply one player research to another player buildings', () => {
+    const { state, player } = makeStateWithMarket();
+    applyAction(state, { type: 'researchYield', playerId: player.id, resource: 'food' });
+
+    const rival = state.players[1];
+    expect(rival.research.food).toBe(0);
+    expect(economyYieldOn('food', 'plain', rival.research.food)).toBe(
+      ECONOMY_YIELD_PER_TURN + ECONOMY_TERRAIN_BONUS,
+    );
+  });
+});
+
+describe('base command scope and supply lines', () => {
+  it('expands spawning and healing reach when upgraded by a nearby builder', () => {
+    const state = makeStateWithBases();
+    state.resourceNodes = [];
+    const player = state.players[0];
+    const base = state.bases.find((entry) => entry.ownerId === player.id && entry.kind === 'base')!;
+    const builder = makeUnit(player.id, 'builder', { x: base.position.x + 1, y: base.position.y });
+    state.units.push(builder);
+
+    expect(base.commandLevel ?? 1).toBe(1);
+    expect(getLegalBuildPositions(state, player)).not.toContainEqual({ x: 3, y: 1 });
+    const before = { ...player.resources };
+
+    applyAction(state, { type: 'upgradeBase', playerId: player.id, unitId: builder.id });
+
+    expect(base.commandLevel).toBe(2);
+    expect(getLegalBuildPositions(state, player)).toContainEqual({ x: 3, y: 1 });
+    for (const key of RESOURCE_KEYS) {
+      expect(player.resources[key]).toBe(before[key] - BASE_COMMAND_UPGRADE_COSTS[2][key]);
+    }
+  });
+
+  it('projects the main base radius to a settlement over connected roads', () => {
+    const state = makeStateWithBases();
+    state.resourceNodes = [];
+    const player = state.players[0];
+    const base = state.bases.find((entry) => entry.ownerId === player.id && entry.kind === 'base')!;
+    base.commandLevel = BASE_COMMAND_MAX_LEVEL;
+    const settlement = {
+      id: 'supplied-settlement',
+      ownerId: player.id,
+      kind: 'settlement' as const,
+      position: { x: 5, y: 5 },
+      hp: 10,
+      maxHp: 10,
+    };
+    state.bases.push(settlement);
+    state.roads.push({ x: 2, y: 2 }, { x: 3, y: 3 }, { x: 4, y: 4 });
+
+    expect(getCommandRadius(state, settlement)).toBe(BASE_COMMAND_MAX_LEVEL);
+    expect(getLegalBuildPositions(state, player)).toContainEqual({ x: 8, y: 5 });
+
+    state.roads = [];
+    expect(getCommandRadius(state, settlement)).toBe(1);
+    expect(getLegalBuildPositions(state, player)).not.toContainEqual({ x: 8, y: 5 });
+  });
+
+  it('heals units in the expanded ring at the start of the owner turn', () => {
+    const state = makeStateWithBases();
+    state.resourceNodes = [];
+    const player = state.players[0];
+    const base = state.bases.find((entry) => entry.ownerId === player.id && entry.kind === 'base')!;
+    base.commandLevel = 2;
+    const unit = makeUnit(player.id, 'footsoldier', { x: base.position.x + 3, y: base.position.y });
+    unit.hp = 1;
+    state.units.push(unit);
+
+    advanceTurn(state);
+    advanceTurn(state);
+
+    expect(unit.hp).toBe(2);
+  });
+
 });
 
 describe('themed maps', () => {

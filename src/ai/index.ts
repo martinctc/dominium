@@ -1,6 +1,7 @@
 import {
   applyAction,
   canBuildEconomy,
+  canBuildMarket,
   canBuildTower,
   canFoundSettlement,
   canUnitAttack,
@@ -11,6 +12,7 @@ import {
   getPlayerById,
   getReachableTiles,
   hasLineOfSight,
+  canResearchYield,
   unitCost,
 } from '../engine/index.js';
 import type { Base, GameState, Player, Position, ResourceKey, Unit, UnitType } from '../engine/index.js';
@@ -93,6 +95,30 @@ function collectIncome(state: GameState, player: Player): void {
   const targetType = shortTypes[0] ?? 'footsoldier';
   const resource = pickIncomeResource(player, targetType);
   applyAction(state, { type: 'income', playerId: player.id, resource });
+}
+
+function runResearchPhase(state: GameState, player: Player): void {
+  if (!state.bases.some((building) => building.ownerId === player.id && building.kind === 'market')) return;
+
+  // Buy the track with the most matching economy buildings first. Limit this
+  // to one purchase so the AI preserves enough stockpile for its army.
+  const economyCounts: Record<ResourceKey, number> = { food: 0, wood: 0, stone: 0 };
+  for (const building of state.bases) {
+    if (building.ownerId === player.id && building.kind === 'economy' && building.produces) {
+      economyCounts[building.produces] += 1;
+    }
+  }
+  const candidates = RESOURCE_KEYS
+    .filter((resource) => canResearchYield(state, player, resource))
+    .sort((a, b) => economyCounts[b] - economyCounts[a] || player.research[a] - player.research[b]);
+  const resource = candidates[0];
+  if (!resource) return;
+
+  try {
+    applyAction(state, { type: 'researchYield', playerId: player.id, resource });
+  } catch (error) {
+    console.warn('[ai] research action failed, skipping', error);
+  }
 }
 
 function runBuildPhase(state: GameState, player: Player): void {
@@ -238,6 +264,10 @@ function runUnitAction(state: GameState, unit: Unit, enemyBases: Base[], enemyUn
           return true;
         }
       }
+      if (countOwned('market') === 0 && canBuildMarket(state, owner, unit)) {
+        applyAction(state, { type: 'buildMarket', playerId: unit.ownerId, unitId: unit.id });
+        return true;
+      }
       if (canFoundSettlement(state, owner, unit)) {
         applyAction(state, { type: 'foundSettlement', playerId: unit.ownerId, unitId: unit.id });
         return true;
@@ -371,6 +401,8 @@ export function runAiTurn(state: GameState, playerId: string, difficulty: AiDiff
   } catch (error) {
     console.warn('[ai] build phase failed', error);
   }
+
+  runResearchPhase(state, player);
 
   const unitIds = state.units.filter((unit) => unit.ownerId === playerId).map((unit) => unit.id);
 

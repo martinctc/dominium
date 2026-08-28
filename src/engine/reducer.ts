@@ -3,7 +3,13 @@ import { chebyshevDistance, hasLineOfSight } from './los.js';
 import { unitCost, unitStatsForSkill, UNIT_DEFS } from './units.js';
 import { minBaseDistance } from './setup.js';
 import type { Action, Base, GameState, Player, Position, ResourceKey, Unit } from './types.js';
-import { BASE_MAX_HP, SETTLEMENT_COST, SETTLEMENT_MAX_HP } from './units.js';
+import {
+  BASE_COMMAND_MAX_LEVEL,
+  BASE_COMMAND_UPGRADE_COSTS,
+  BASE_MAX_HP,
+  SETTLEMENT_COST,
+  SETTLEMENT_MAX_HP,
+} from './units.js';
 import {
   MIN_TOWER_DISTANCE,
   TOWER_ATTACK,
@@ -13,12 +19,13 @@ import {
 } from './units.js';
 import {
   ECONOMY_MAX_HP,
+  ECONOMY_RESEARCH_BONUS,
   economyCostFor,
   economyLabelFor,
   economyYieldOn,
   MIN_ECONOMY_DISTANCE,
 } from './units.js';
-import { MARKET_COST, MARKET_MAX_HP, MARKET_EXCHANGE_RATE } from './units.js';
+import { MARKET_COST, MARKET_MAX_HP, MARKET_EXCHANGE_RATE, RESEARCH_MAX_LEVEL, researchCostFor } from './units.js';
 
 export function getPlayerById(state: GameState, playerId: string): Player {
   const player = state.players.find((entry) => entry.id === playerId);
@@ -26,10 +33,18 @@ export function getPlayerById(state: GameState, playerId: string): Player {
   return player;
 }
 
-/** Returns whether a building has a continuous road connection to its owner's main base. */
-function isRoadConnectedToMainBase(state: GameState, building: Base): boolean {
-  const mainBase = getMainBase(state, building.ownerId);
-  if (!mainBase || building.id === mainBase.id || state.roads.length === 0) return false;
+/**
+ * Every tile reachable from a player's main base by walking their road network,
+ * as `"x:y"` keys. The main base's own tile seeds the search, so a building
+ * standing directly beside the base counts as connected.
+ *
+ * This is the expensive half of a supply-line check (a BFS over `state.roads`),
+ * so callers that need to test more than one building should compute it once and
+ * pass it around rather than calling `isRoadConnectedToMainBase` in a loop.
+ */
+function reachableRoadKeys(state: GameState, playerId: string): Set<string> {
+  const mainBase = getMainBase(state, playerId);
+  if (!mainBase || state.roads.length === 0) return new Set();
 
   const roadKeys = new Set(state.roads.map((road) => `${road.x}:${road.y}`));
   const reached = new Set<string>([`${mainBase.position.x}:${mainBase.position.y}`]);
@@ -47,7 +62,11 @@ function isRoadConnectedToMainBase(state: GameState, building: Base): boolean {
       }
     }
   }
+  return reached;
+}
 
+/** Whether any of the building's own tile or its eight neighbours is on the road network. */
+function touchesRoadNetwork(building: Base, reached: Set<string>): boolean {
   for (let dy = -1; dy <= 1; dy += 1) {
     for (let dx = -1; dx <= 1; dx += 1) {
       if (reached.has(`${building.position.x + dx}:${building.position.y + dy}`)) return true;
@@ -56,11 +75,42 @@ function isRoadConnectedToMainBase(state: GameState, building: Base): boolean {
   return false;
 }
 
+/**
+ * The ids of every structure the player has that the main base can supply: the
+ * main base itself, plus each settlement joined to it by a continuous road.
+ *
+ * Prefer this over repeated `isRoadConnectedToMainBase` calls — it runs the road
+ * BFS once for the whole player instead of once per building.
+ */
+export function getSuppliedStructureIds(state: GameState, playerId: string): Set<string> {
+  const supplied = new Set<string>();
+  const mainBase = getMainBase(state, playerId);
+  if (!mainBase) return supplied;
+  supplied.add(mainBase.id);
+  if (state.roads.length === 0) return supplied;
+
+  const reached = reachableRoadKeys(state, playerId);
+  for (const building of state.bases) {
+    if (building.ownerId !== playerId || building.id === mainBase.id) continue;
+    if (touchesRoadNetwork(building, reached)) supplied.add(building.id);
+  }
+  return supplied;
+}
+
+/** Returns whether a building has a continuous road connection to its owner's main base. */
+function isRoadConnectedToMainBase(state: GameState, building: Base): boolean {
+  const mainBase = getMainBase(state, building.ownerId);
+  if (!mainBase || building.id === mainBase.id || state.roads.length === 0) return false;
+  return touchesRoadNetwork(building, reachableRoadKeys(state, building.ownerId));
+}
+
 /** Repairs one HP on each damaged non-base building supplied by the road network. */
 function repairConnectedBuildings(state: GameState, player: Player): void {
+  const supplied = getSuppliedStructureIds(state, player.id);
+  const mainBase = getMainBase(state, player.id);
   for (const building of state.bases) {
     if (building.ownerId !== player.id || building.hp >= building.maxHp) continue;
-    if (!isRoadConnectedToMainBase(state, building)) continue;
+    if (building.id === mainBase?.id || !supplied.has(building.id)) continue;
     building.hp = Math.min(building.maxHp, building.hp + 1);
     state.actionLog.push(`🔧 ${player.name}'s ${buildingLabel(building)} repairs 1 HP via the road network.`);
   }
@@ -108,6 +158,36 @@ export function buildingLabel(building: Base): string {
 
 /** The player's main base — the one whose destruction eliminates them. */export function getMainBase(state: GameState, playerId: string): Base | undefined {
   return state.bases.find((entry) => entry.ownerId === playerId && entry.kind === 'base');
+}
+
+/**
+ * Returns the local command radius for a logistical structure. A settlement
+ * keeps its normal radius until a road connects it to the owner's main base;
+ * then it projects the main base's upgraded command reach.
+ */
+export function getCommandRadius(
+  state: GameState,
+  structure: Base,
+  suppliedIds?: Set<string>,
+): number {
+  if (structure.kind === 'base') return structure.commandLevel ?? 1;
+  if (structure.kind !== 'settlement') return 0;
+  if (!isSuppliedByMainBase(state, structure, suppliedIds)) return 1;
+  return getMainBase(state, structure.ownerId)?.commandLevel ?? 1;
+}
+
+/**
+ * Pass `suppliedIds` from {@link getSuppliedStructureIds} when testing several
+ * structures in one pass; without it each call re-runs the road BFS.
+ */
+export function isSuppliedByMainBase(
+  state: GameState,
+  structure: Base,
+  suppliedIds?: Set<string>,
+): boolean {
+  if (structure.kind === 'base') return true;
+  if (structure.kind !== 'settlement') return false;
+  return suppliedIds ? suppliedIds.has(structure.id) : isRoadConnectedToMainBase(state, structure);
 }
 
 export function getUnitById(state: GameState, unitId: string): Unit {
@@ -176,8 +256,6 @@ function checkResourceNodeCaptures(state: GameState, player: Player): void {
   }
 }
 
-/** Units standing within this Chebyshev distance of one of their own buildings regen HP each turn. */
-const HEAL_RANGE = 2;
 const HEAL_AMOUNT = 1;
 
 type DamageTarget =
@@ -293,9 +371,13 @@ function applyAreaDamage(
       replacement.kind = 'base';
       replacement.maxHp = BASE_MAX_HP;
       replacement.hp = Math.min(replacement.hp, replacement.maxHp);
+      // A promoted settlement starts at the default command radius. Set this
+      // explicitly rather than leaving it undefined: the upgrades bought for the
+      // old base are lost with it, and the log below tells the player so.
+      replacement.commandLevel = 1;
       defender.baseId = replacement.id;
       state.actionLog.push(
-        `🏰 ${defender.name}'s base was destroyed. Their closest settlement became the new base.`,
+        `🏰 ${defender.name}'s base was destroyed. Their closest settlement became the new base, at command radius 1.`,
       );
       continue;
     }
@@ -321,11 +403,18 @@ function applyHeroArrivalSplash(state: GameState, player: Player, hero: Unit): v
 function healUnitsNearBase(state: GameState, player: Player): void {
   const structures = getSpawnStructures(state, player.id);
   if (structures.length === 0) return;
+  // Resolve each structure's healing reach once. Doing it inside the unit loop
+  // would re-run the supply-line BFS for every unit/structure pair.
+  const suppliedIds = getSuppliedStructureIds(state, player.id);
+  const healRanges = structures.map((structure) => ({
+    position: structure.position,
+    range: getCommandRadius(state, structure, suppliedIds) + 1,
+  }));
   for (const unit of state.units) {
     if (unit.ownerId !== player.id) continue;
     if (unit.hp >= unit.maxHp) continue;
-    const nearStructure = structures.some(
-      (structure) => chebyshevDistance(unit.position, structure.position) <= HEAL_RANGE,
+    const nearStructure = healRanges.some(
+      (structure) => chebyshevDistance(unit.position, structure.position) <= structure.range,
     );
     if (!nearStructure) continue;
     unit.hp = Math.min(unit.maxHp, unit.hp + HEAL_AMOUNT);
@@ -482,14 +571,16 @@ export function canPlaceBaseAt(state: GameState, position: Position, player?: Pl
     (candidate) => candidate.x === position.x && candidate.y === position.y,
   );
 }
-/** Units may be built on any free, passable tile adjacent to any of the player's buildings. */
+/** Units may be built within the command radius of the player's logistical buildings. */
 export function getLegalBuildPositions(state: GameState, player: Player): Position[] {
   const structures = getSpawnStructures(state, player.id);
+  const suppliedIds = getSuppliedStructureIds(state, player.id);
   const legalPositions: Position[] = [];
   const seen = new Set<string>();
   for (const structure of structures) {
-    for (let y = structure.position.y - 1; y <= structure.position.y + 1; y += 1) {
-      for (let x = structure.position.x - 1; x <= structure.position.x + 1; x += 1) {
+    const radius = getCommandRadius(state, structure, suppliedIds);
+    for (let y = structure.position.y - radius; y <= structure.position.y + radius; y += 1) {
+      for (let x = structure.position.x - radius; x <= structure.position.x + radius; x += 1) {
         if (x < 0 || y < 0 || x >= state.width || y >= state.height) continue;
         if (state.terrain[y]?.[x] === 'lake' || state.terrain[y]?.[x] === 'mountain') continue;
         const key = `${x}:${y}`;
@@ -519,7 +610,7 @@ export const ROAD_COST = 1;
  *
  * Tiles occupied by the player's *own* units are allowed — you are paving the
  * ground your troops are standing on, which is exactly how you bridge a lake
- * you have already reached. Enemy-occupied tiles and building tiles are not.
+ * you have already reached. Enemy-occupied tiles and enemy building tiles are not.
  */
 export function getLegalRoadPositions(state: GameState, player: Player): Position[] {
   const anchors: Position[] = [
@@ -541,7 +632,10 @@ export function getLegalRoadPositions(state: GameState, player: Player): Positio
         if (state.roads.some((road) => road.x === x && road.y === y)) continue;
         const occupant = state.units.find((unit) => unit.position.x === x && unit.position.y === y);
         if (occupant && occupant.ownerId !== player.id) continue;
-        if (state.bases.some((baseEntry) => baseEntry.position.x === x && baseEntry.position.y === y)) continue;
+        const building = state.bases.find(
+          (baseEntry) => baseEntry.position.x === x && baseEntry.position.y === y,
+        );
+        if (building && building.ownerId !== player.id) continue;
         seen.add(key);
         legalPositions.push({ x, y });
       }
@@ -629,6 +723,30 @@ export function canBuildTower(state: GameState, player: Player, unit: Unit): boo
  */
 function builderIsSpent(unit: Unit): boolean {
   return unit.hasAttackedThisTurn;
+}
+
+/** Why the given builder cannot expand the owner's main base command radius. */
+export function baseUpgradeBlockReason(state: GameState, player: Player, unit: Unit): string | null {
+  if (unit.type !== 'builder') return 'Only a builder can upgrade a base.';
+  if (unit.ownerId !== player.id) return 'That is not your builder.';
+  if (builderIsSpent(unit)) return 'This builder has already used its turn.';
+
+  const base = getMainBase(state, player.id);
+  if (!base || chebyshevDistance(base.position, unit.position) > 1) {
+    return 'The builder must stand next to your main base.';
+  }
+  const nextLevel = (base.commandLevel ?? 1) + 1;
+  if (nextLevel > BASE_COMMAND_MAX_LEVEL) return 'Your base command radius is already fully expanded.';
+  const cost = BASE_COMMAND_UPGRADE_COSTS[nextLevel];
+  if (!cost) return 'No further base upgrades are available.';
+  for (const [key, amount] of Object.entries(cost) as [ResourceKey, number][]) {
+    if (player.resources[key] < amount) return `Not enough ${key} to expand the base command radius.`;
+  }
+  return null;
+}
+
+export function canUpgradeBase(state: GameState, player: Player, unit: Unit): boolean {
+  return baseUpgradeBlockReason(state, player, unit) === null;
 }
 
 /**
@@ -720,6 +838,44 @@ export function canBuildMarket(state: GameState, player: Player, unit: Unit): bo
   return marketBlockReason(state, player, unit) === null;
 }
 
+/**
+ * Why the given player cannot buy the next research level for this resource,
+ * or null if they can. Research is bought at a standing market, so losing the
+ * market locks further research (already-purchased levels are permanent).
+ */
+export function researchBlockReason(
+  state: GameState,
+  player: Player,
+  resource: ResourceKey,
+): string | null {
+  const hasMarket = state.bases.some(
+    (entry) => entry.ownerId === player.id && entry.kind === 'market',
+  );
+  if (!hasMarket) return 'You need a market to research yield upgrades.';
+
+  const nextLevel = player.research[resource] + 1;
+  if (nextLevel > RESEARCH_MAX_LEVEL) {
+    return `${resource} yield is already fully researched.`;
+  }
+  for (const [key, amount] of Object.entries(researchCostFor(resource, nextLevel)) as [
+    ResourceKey,
+    number,
+  ][]) {
+    if (player.resources[key] < amount) {
+      return `Not enough ${key} to research ${resource} yield.`;
+    }
+  }
+  return null;
+}
+
+export function canResearchYield(
+  state: GameState,
+  player: Player,
+  resource: ResourceKey,
+): boolean {
+  return researchBlockReason(state, player, resource) === null;
+}
+
 export function applyAction(state: GameState, action: Action): GameState {
   switch (action.type) {
     case 'placeBase': {
@@ -743,6 +899,7 @@ export function applyAction(state: GameState, action: Action): GameState {
         position: { ...action.position },
         hp: BASE_MAX_HP,
         maxHp: BASE_MAX_HP,
+        commandLevel: 1,
       });
       state.actionLog.push(`${player.name} placed their base at ${action.position.x},${action.position.y}.`);
 
@@ -786,7 +943,7 @@ export function applyAction(state: GameState, action: Action): GameState {
       for (const building of state.bases) {
         if (building.ownerId !== player.id || building.kind !== 'economy' || !building.produces) continue;
         const terrain = state.terrain[building.position.y]?.[building.position.x];
-        const perTurn = economyYieldOn(building.produces, terrain);
+        const perTurn = economyYieldOn(building.produces, terrain, player.research[building.produces]);
         player.resources[building.produces] += perTurn;
         player.stats.incomeCollected[building.produces] += perTurn;
         yields[building.produces] = (yields[building.produces] ?? 0) + perTurn;
@@ -923,6 +1080,37 @@ export function applyAction(state: GameState, action: Action): GameState {
       return state;
     }
 
+    case 'upgradeBase': {
+      const player = getPlayerById(state, action.playerId);
+      const activePlayer = getActivePlayer(state);
+      if (player.id !== activePlayer.id) {
+        throw new Error('Only the active player may upgrade a base.');
+      }
+      if (!player.hasCollectedIncomeThisTurn) {
+        throw new Error('You must collect income before taking any other action this turn.');
+      }
+
+      const builder = getUnitById(state, action.unitId);
+      const blockReason = baseUpgradeBlockReason(state, player, builder);
+      if (blockReason) throw new Error(blockReason);
+
+      const base = getMainBase(state, player.id)!;
+      const nextLevel = (base.commandLevel ?? 1) + 1;
+      const cost = BASE_COMMAND_UPGRADE_COSTS[nextLevel]!;
+      for (const [key, amount] of Object.entries(cost) as [ResourceKey, number][]) {
+        player.resources[key] -= amount;
+        player.stats.resourcesSpent[key] += amount;
+      }
+
+      base.commandLevel = nextLevel;
+      builder.hasMovedThisTurn = true;
+      builder.hasAttackedThisTurn = true;
+      state.actionLog.push(
+        `🏰 ${player.name}'s base expanded its command radius to ${nextLevel} — units can now spawn and heal farther away.`,
+      );
+      return state;
+    }
+
     case 'buildTower': {
       const player = getPlayerById(state, action.playerId);
       const activePlayer = getActivePlayer(state);
@@ -984,7 +1172,7 @@ export function applyAction(state: GameState, action: Action): GameState {
       builder.hasMovedThisTurn = true;
       builder.hasAttackedThisTurn = true;
       const terrain = state.terrain[builder.position.y]?.[builder.position.x];
-      const perTurn = economyYieldOn(action.produces, terrain);
+      const perTurn = economyYieldOn(action.produces, terrain, player.research[action.produces]);
       state.bases.push({
         id: `economy-${player.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         ownerId: player.id,
@@ -1067,6 +1255,34 @@ export function applyAction(state: GameState, action: Action): GameState {
       player.resources[action.to] += action.amount;
       state.actionLog.push(
         `⚖️ ${player.name} exchanged ${cost} ${action.from} for ${action.amount} ${action.to} at the market.`,
+      );
+      return state;
+    }
+
+    case 'researchYield': {
+      const player = getPlayerById(state, action.playerId);
+      const activePlayer = getActivePlayer(state);
+      if (player.id !== activePlayer.id) {
+        throw new Error('Only the active player may research at a market.');
+      }
+      if (!player.hasCollectedIncomeThisTurn) {
+        throw new Error('You must collect income before taking any other action this turn.');
+      }
+      const blockReason = researchBlockReason(state, player, action.resource);
+      if (blockReason) throw new Error(blockReason);
+
+      const nextLevel = player.research[action.resource] + 1;
+      for (const [key, amount] of Object.entries(
+        researchCostFor(action.resource, nextLevel),
+      ) as [ResourceKey, number][]) {
+        player.resources[key] -= amount;
+        player.stats.resourcesSpent[key] += amount;
+      }
+      player.research[action.resource] = nextLevel;
+      state.actionLog.push(
+        `🔬 ${player.name} researched ${action.resource} yield to level ${nextLevel} — every ${economyLabelFor(
+          action.resource,
+        )} they own now yields +${ECONOMY_RESEARCH_BONUS} more per turn.`,
       );
       return state;
     }
