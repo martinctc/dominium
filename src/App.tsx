@@ -1208,6 +1208,10 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
   const [showHowToPlay, setShowHowToPlay] = useState(false);
   const [draggedUnitType, setDraggedUnitType] = useState<UnitType | null>(null);
   const [dismissedVictory, setDismissedVictory] = useState(false);
+  // Utility controls in the top bar collapse behind a menu on narrow screens so the
+  // header stays one row instead of eating ~40% of a phone viewport. On desktop the
+  // menu is always shown via CSS, so this flag only matters below 900px.
+  const [topBarMenuOpen, setTopBarMenuOpen] = useState(false);
 
   // Every player after the human (player 0) is treated as AI-controlled when AI is enabled.
   const aiPlayerIds = new Set(state.players.slice(1).map((player) => player.id));
@@ -1876,37 +1880,84 @@ function GameScreen({ settings, onRestart }: { settings: GameSettings; onRestart
   // the pill always describes the units the player is about to command.
   const skillOnShow = (isSetupPhase ? setupPlayer : activePlayer)?.specialSkill ?? settings.specialSkill;
 
+  useEffect(() => {
+    if (!topBarMenuOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setTopBarMenuOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [topBarMenuOpen]);
+
   return (
     <div className="app-shell">
-      <header className="top-bar">
-        <h1>Dominium <span className="map-theme-label" title={`Map theme: ${settings.mapTheme}`}>🗺️ {settings.mapTheme}</span></h1>
+      <header className={`top-bar${topBarMenuOpen ? ' menu-open' : ''}`}>
+        <div className="top-bar-heading">
+          <h1>Dominium <span className="map-theme-label" title={`Map theme: ${settings.mapTheme}`}>🗺️ {settings.mapTheme}</span></h1>
+          <button
+            type="button"
+            className="top-bar-menu-toggle"
+            aria-expanded={topBarMenuOpen}
+            aria-controls="top-bar-menu"
+            onClick={() => setTopBarMenuOpen((open) => !open)}
+          >
+            {topBarMenuOpen ? '✕' : '☰'} Menu
+          </button>
+        </div>
         <div className="turn-info">
-          <button className="stats-toggle" onClick={() => setShowStats(true)}>📊 Stats</button>
-          <button className="stats-toggle" onClick={() => setShowHowToPlay(true)}>❓ How to play</button>
-          <a
-            className="stats-toggle feedback-link"
-            href="https://github.com/martinctc/dominium/issues/new/choose"
-            target="_blank"
-            rel="noreferrer"
-          >
-            🐞 Feedback
-          </a>
-          <button className="stats-toggle" onClick={onRestart}>🔁 New game</button>
-          <label className="ai-toggle">
-            <input
-              type="checkbox"
-              checked={aiEnabled}
-              onChange={(event) => setAiEnabled(event.target.checked)}
-            />
-            🤖 Players 2+ are AI ({settings.difficulty})
-          </label>
+          <div className="top-bar-menu" id="top-bar-menu">
+            <button
+              className="stats-toggle"
+              onClick={() => {
+                setShowStats(true);
+                setTopBarMenuOpen(false);
+              }}
+            >
+              📊 Stats
+            </button>
+            <button
+              className="stats-toggle"
+              onClick={() => {
+                setShowHowToPlay(true);
+                setTopBarMenuOpen(false);
+              }}
+            >
+              ❓ How to play
+            </button>
+            <a
+              className="stats-toggle feedback-link"
+              href="https://github.com/martinctc/dominium/issues/new/choose"
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setTopBarMenuOpen(false)}
+            >
+              🐞 Feedback
+            </a>
+            <button
+              className="stats-toggle"
+              onClick={() => {
+                setTopBarMenuOpen(false);
+                onRestart();
+              }}
+            >
+              🔁 New game
+            </button>
+            <label className="ai-toggle">
+              <input
+                type="checkbox"
+                checked={aiEnabled}
+                onChange={(event) => setAiEnabled(event.target.checked)}
+              />
+              🤖 Players 2+ are AI ({settings.difficulty})
+            </label>
+            <span
+              className="skill-pill"
+              title={`${SPECIAL_SKILL_INFO[skillOnShow].label} — ${SPECIAL_SKILL_INFO[skillOnShow].description}`}
+            >
+              ✨ {SPECIAL_SKILL_INFO[skillOnShow].label}
+            </span>
+          </div>
           {!isSetupPhase && <span className="turn-pill">⏱️ Turn {state.turn}</span>}
-          <span
-            className="skill-pill"
-            title={`${SPECIAL_SKILL_INFO[skillOnShow].label} — ${SPECIAL_SKILL_INFO[skillOnShow].description}`}
-          >
-            ✨ {SPECIAL_SKILL_INFO[skillOnShow].label}
-          </span>
           <span className="phase-pill">
             {gameOver
               ? 'Game over'

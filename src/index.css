@@ -217,6 +217,32 @@ button:focus-visible,
   align-items: center;
   gap: 10px;
 }
+/* Wrapper for the utility controls (stats, help, feedback, new game, AI toggle,
+   skill pill). Transparent and inert on desktop; becomes a collapsible panel
+   under 900px — see the mobile media query. */
+.top-bar-menu {
+  display: contents;
+}
+.top-bar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.top-bar-menu-toggle {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(30, 41, 59, 0.85);
+  color: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
 .phase-pill {
   background: rgba(30, 41, 59, 0.85);
   border-radius: 999px;
@@ -1648,6 +1674,42 @@ a.stats-toggle {
     position: sticky;
     top: 0;
     z-index: 20;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+  .top-bar h1 {
+    font-size: 1.1rem;
+  }
+  .top-bar .map-theme-label {
+    display: none;
+  }
+  .top-bar-menu-toggle {
+    display: inline-flex;
+  }
+  .turn-info {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  /* Collapsed by default on narrow screens; the toggle button reveals it as a
+     full-width panel below the always-visible turn/phase/player pills. */
+  .top-bar-menu {
+    display: none;
+    order: 1;
+    width: 100%;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+  }
+  .top-bar.menu-open .top-bar-menu {
+    display: flex;
+  }
+  .top-bar-menu .stats-toggle,
+  .top-bar-menu .ai-toggle {
+    min-height: 44px;
   }
   .main-row {
     flex-direction: column;
@@ -1695,14 +1757,6 @@ a.stats-toggle {
 }
 
 @media (max-width: 480px) {
-  .top-bar {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
-  .turn-info {
-    flex-wrap: wrap;
-  }
   .resource-cards {
     flex-wrap: wrap;
   }
