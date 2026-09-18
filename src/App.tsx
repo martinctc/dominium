@@ -716,17 +716,69 @@ function militaryPoints(state: GameState, player: GameState['players'][number]):
   return unitScore + buildingScore;
 }
 
+function totalPoints(state: GameState, player: GameState['players'][number]): number {
+  return economyPoints(state, player) + militaryPoints(state, player);
+}
+
+function playerStatus(player: GameState['players'][number]): string {
+  return player.alive ? 'Active' : `Eliminated (turn ${player.eliminatedOnTurn ?? '?'})`;
+}
+
+type StatsPage = 'overview' | 'economy' | 'battle';
+type TimelineMetricKey = 'unitCount' | 'totalResources';
+
 function StatsPanel({ state, onClose }: { state: GameState; onClose: () => void }) {
-  const [statsPage, setStatsPage] = useState<'overview' | 'battle'>('overview');
+  const [statsPage, setStatsPage] = useState<StatsPage>('overview');
+  const rankedPlayers = [...state.players].sort((a, b) => {
+    const totalDifference = totalPoints(state, b) - totalPoints(state, a);
+    return totalDifference || a.name.localeCompare(b.name);
+  });
+
+  const tabs: { page: StatsPage; label: string }[] = [
+    { page: 'overview', label: 'Overview' },
+    { page: 'economy', label: 'Economy' },
+    { page: 'battle', label: 'Battle' },
+  ];
+
+  return (
+    <div className="stats-overlay" onClick={onClose}>
+      <div className="stats-panel" onClick={(event) => event.stopPropagation()}>
+        <div className="stats-panel-header">
+          <h2>📊 Stats</h2>
+          <button className="stats-close" onClick={onClose} aria-label="Close stats panel">✕</button>
+        </div>
+        <div className="stats-tabs" role="tablist" aria-label="Statistics pages">
+          {tabs.map(({ page, label }) => (
+            <button
+              key={page}
+              className={statsPage === page ? 'selected' : ''}
+              onClick={() => setStatsPage(page)}
+              role="tab"
+              aria-selected={statsPage === page}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {statsPage === 'overview' && <StatsOverviewPage state={state} rankedPlayers={rankedPlayers} />}
+        {statsPage === 'economy' && <StatsEconomyPage state={state} rankedPlayers={rankedPlayers} />}
+        {statsPage === 'battle' && <StatsBattlePage state={state} rankedPlayers={rankedPlayers} />}
+      </div>
+    </div>
+  );
+}
+
+function StatsOverviewPage({
+  state,
+  rankedPlayers,
+}: {
+  state: GameState;
+  rankedPlayers: GameState['players'];
+}) {
   const maxTurn = state.timeline.reduce((max, entry) => Math.max(max, entry.turn), 0);
   const chartWidth = 320;
   const chartHeight = 120;
-  const battleLog = state.actionLog.filter((entry) => /hit|shot|destroyed|area attack/i.test(entry));
-  const rankedPlayers = [...state.players].sort((a, b) => {
-    const totalDifference =
-      economyPoints(state, b) + militaryPoints(state, b) - economyPoints(state, a) - militaryPoints(state, a);
-    return totalDifference || a.name.localeCompare(b.name);
-  });
 
   const toPoints = (values: Array<{ turn: number; value: number }>, maxValue: number) =>
     values
@@ -738,203 +790,237 @@ function StatsPanel({ state, onClose }: { state: GameState; onClose: () => void 
       .join(' ');
 
   return (
-    <div className="stats-overlay" onClick={onClose}>
-      <div className="stats-panel" onClick={(event) => event.stopPropagation()}>
-        <div className="stats-panel-header">
-          <h2>📊 Stats</h2>
-          <button className="stats-close" onClick={onClose} aria-label="Close stats panel">✕</button>
-        </div>
-        <div className="stats-tabs" role="tablist" aria-label="Statistics pages">
-          <button
-            className={statsPage === 'overview' ? 'selected' : ''}
-            onClick={() => setStatsPage('overview')}
-            role="tab"
-            aria-selected={statsPage === 'overview'}
-          >
-            Overview
-          </button>
-          <button
-            className={statsPage === 'battle' ? 'selected' : ''}
-            onClick={() => setStatsPage('battle')}
-            role="tab"
-            aria-selected={statsPage === 'battle'}
-          >
-            Battle report
-          </button>
-        </div>
-
-        {statsPage === 'overview' ? (
-          <>
-          <table className="stats-table">
-          <thead>
-            <tr>
-              <th>Player</th>
-              <th title="Current resources, economy buildings, held nodes and research">Economy points</th>
-              <th title="Living units and military buildings">Military points</th>
-              <th>Total points</th>
-              <th>Status</th>
-              <th>Nodes captured</th>
-              <th>Built 🏘️/🗼/🌾</th>
-              <th>Collected food</th>
-              <th>Collected wood</th>
-              <th>Collected stone</th>
-              <th>Spent food</th>
-              <th>Spent wood</th>
-              <th>Spent stone</th>
-              <th>Total collected</th>
-              <th>Total spent</th>
+    <>
+      <table className="stats-table">
+        <thead>
+          <tr>
+            <th>Player</th>
+            <th>Status</th>
+            <th title="Current resources, economy buildings, held nodes and research">Economy points</th>
+            <th title="Living units and military buildings">Military points</th>
+            <th>Total points</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rankedPlayers.map((player) => (
+            <tr key={player.id}>
+              <td>
+                <span className="stats-player-dot" style={{ background: PLAYER_BADGE_COLORS[player.color] }} />
+                {player.name}
+              </td>
+              <td>{playerStatus(player)}</td>
+              <td>{economyPoints(state, player)}</td>
+              <td>{militaryPoints(state, player)}</td>
+              <td><strong>{totalPoints(state, player)}</strong></td>
             </tr>
-          </thead>
-          <tbody>
-            {rankedPlayers.map((player) => (
-              <tr key={player.id}>
-                <td>
-                  <span className="stats-player-dot" style={{ background: PLAYER_BADGE_COLORS[player.color] }} />
-                  {player.name}
-                </td>
-                <td>{economyPoints(state, player)}</td>
-                <td>{militaryPoints(state, player)}</td>
-                <td><strong>{economyPoints(state, player) + militaryPoints(state, player)}</strong></td>
-                <td>{player.alive ? 'Active' : `Eliminated (turn ${player.eliminatedOnTurn ?? '?'})`}</td>
-                <td>{player.stats.nodesCaptured}</td>
-                <td>
-                  {player.stats.settlementsFounded}/{player.stats.towersBuilt}/{player.stats.economyBuilt}
-                </td>
-                <td>
-                  {player.stats.incomeCollected.food}
-                </td>
-                <td>
-                  {player.stats.incomeCollected.wood}
-                </td>
-                <td>
-                  {player.stats.incomeCollected.stone}
-                </td>
-                <td>
-                  {player.stats.resourcesSpent.food}
-                </td>
-                <td>
-                  {player.stats.resourcesSpent.wood}
-                </td>
-                <td>
-                  {player.stats.resourcesSpent.stone}
-                </td>
-                <td>{sumResources(player.stats.incomeCollected)}</td>
-                <td>{sumResources(player.stats.resourcesSpent)}</td>
-              </tr>
-            ))}
-          </tbody>
-          </table>
-          <p className="hint">
-            Players are ranked by total points. Economy points combine current resources, economy buildings,
-            held nodes and research; military points combine living units and military buildings.
-          </p>
+          ))}
+        </tbody>
+      </table>
+      <p className="hint">
+        Players are ranked by total points. Economy points combine current resources, economy buildings,
+        held nodes and research; military points combine living units and military buildings.
+      </p>
 
-          <h3>Population &amp; economy comparison</h3>
-        {state.timeline.length === 0 ? (
-          <p className="hint">No turns completed yet — end a turn to start recording the timeline.</p>
-        ) : (
-          <div className="stats-charts">
-            {([
-              { key: 'unitCount', label: 'Population (units)' },
-              { key: 'totalResources', label: 'Economy (total resources)' },
-            ] as const).map(({ key, label }) => {
-              const maxValue = state.timeline.reduce((max, entry) => Math.max(max, entry[key]), 1);
-              return (
-                <div key={key} className="stats-chart-card">
-                  <div className="stats-chart-title">{label}</div>
-                  <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="stats-chart-svg">
-                    {state.players.map((player) => {
-                      const entries = state.timeline
-                        .filter((entry) => entry.playerId === player.id)
-                        .sort((a, b) => a.turn - b.turn);
-                      if (entries.length === 0) return null;
-                      const points = toPoints(
-                        entries.map((entry) => ({ turn: entry.turn, value: entry[key] })),
-                        maxValue,
-                      );
-                      return (
-                        <polyline
-                          key={player.id}
-                          points={points}
-                          fill="none"
-                          stroke={PLAYER_BADGE_COLORS[player.color]}
-                          strokeWidth={2}
-                        />
-                      );
-                    })}
-                    {state.players.map((player) => {
-                      if (player.eliminatedOnTurn === null) return null;
-                      const x = maxTurn === 0 ? 0 : Math.min((player.eliminatedOnTurn / maxTurn) * chartWidth, chartWidth);
-                      const color = PLAYER_BADGE_COLORS[player.color];
-                      return (
-                        <g key={`${player.id}-eliminated`} className="stats-elimination-marker" style={{ color }}>
-                          <line x1={x} x2={x} y1={0} y2={chartHeight} stroke={color} />
-                          <text x={x} y={14} textAnchor="middle" fill={color}>✕</text>
-                        </g>
-                      );
-                    })}
-                  </svg>
-                  <div className="stats-chart-legend">
-                    {state.players.map((player) => {
-                      const lastEntry = [...state.timeline]
-                        .filter((entry) => entry.playerId === player.id)
-                        .sort((a, b) => b.turn - a.turn)[0];
-                      return (
-                        <span key={player.id}>
-                          <span className="stats-legend-swatch" style={{ background: PLAYER_BADGE_COLORS[player.color] }} />
-                          {player.name} ({lastEntry ? lastEntry[key] : 0})
-                        </span>
-                      );
-                    })}
-                  </div>
+      <h3>Population &amp; economy comparison</h3>
+      {state.timeline.length === 0 ? (
+        <p className="hint">No turns completed yet — end a turn to start recording the timeline.</p>
+      ) : (
+        <div className="stats-charts">
+          {([
+            { key: 'unitCount', label: 'Population (units)' },
+            { key: 'totalResources', label: 'Economy (total resources)' },
+          ] as const).map(({ key, label }: { key: TimelineMetricKey; label: string }) => {
+            const maxValue = state.timeline.reduce((max, entry) => Math.max(max, entry[key]), 1);
+            return (
+              <div key={key} className="stats-chart-card">
+                <div className="stats-chart-title">{label}</div>
+                <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="stats-chart-svg">
+                  {state.players.map((player) => {
+                    const entries = state.timeline
+                      .filter((entry) => entry.playerId === player.id)
+                      .sort((a, b) => a.turn - b.turn);
+                    if (entries.length === 0) return null;
+                    const points = toPoints(
+                      entries.map((entry) => ({ turn: entry.turn, value: entry[key] })),
+                      maxValue,
+                    );
+                    return (
+                      <polyline
+                        key={player.id}
+                        points={points}
+                        fill="none"
+                        stroke={PLAYER_BADGE_COLORS[player.color]}
+                        strokeWidth={2}
+                      />
+                    );
+                  })}
+                  {state.players.map((player) => {
+                    if (player.eliminatedOnTurn === null) return null;
+                    const x = maxTurn === 0 ? 0 : Math.min((player.eliminatedOnTurn / maxTurn) * chartWidth, chartWidth);
+                    const color = PLAYER_BADGE_COLORS[player.color];
+                    return (
+                      <g key={`${player.id}-eliminated`} className="stats-elimination-marker" style={{ color }}>
+                        <line x1={x} x2={x} y1={0} y2={chartHeight} stroke={color} />
+                        <text x={x} y={14} textAnchor="middle" fill={color}>✕</text>
+                      </g>
+                    );
+                  })}
+                </svg>
+                <div className="stats-chart-legend">
+                  {state.players.map((player) => {
+                    const lastEntry = [...state.timeline]
+                      .filter((entry) => entry.playerId === player.id)
+                      .sort((a, b) => b.turn - a.turn)[0];
+                    return (
+                      <span key={player.id}>
+                        <span className="stats-legend-swatch" style={{ background: PLAYER_BADGE_COLORS[player.color] }} />
+                        {player.name} ({lastEntry ? lastEntry[key] : 0})
+                      </span>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
-        )}
-          </>
-        ) : (
-          <>
-            <h3>Battle report</h3>
-            <table className="stats-table">
-              <thead>
-                <tr>
-                  <th>Player</th>
-                  <th>Status</th>
-                  <th>Units built</th>
-                  <th>Units lost</th>
-                  <th>Units killed</th>
-                  <th>Buildings razed</th>
-                </tr>
-              </thead>
-              <tbody>
-                {state.players.map((player) => (
-                  <tr key={player.id}>
-                    <td>
-                      <span className="stats-player-dot" style={{ background: PLAYER_BADGE_COLORS[player.color] }} />
-                      {player.name}
-                    </td>
-                    <td>{player.alive ? 'Active' : `Eliminated on turn ${player.eliminatedOnTurn ?? '?'}`}</td>
-                    <td>{player.stats.unitsBuilt}</td>
-                    <td>{player.stats.unitsLost}</td>
-                    <td>{player.stats.unitsKilled}</td>
-                    <td>{player.stats.buildingsRazed}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <h3>Combat log</h3>
-            {battleLog.length === 0 ? (
-              <p className="hint">No combat has been recorded yet.</p>
-            ) : (
-              <div className="stats-battle-log">
-                {battleLog.map((entry, index) => <div key={`${index}-${entry}`}>{entry}</div>)}
               </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+function StatsEconomyPage({
+  state,
+  rankedPlayers,
+}: {
+  state: GameState;
+  rankedPlayers: GameState['players'];
+}) {
+  return (
+    <>
+      <h3>Economic position</h3>
+      <table className="stats-table">
+        <thead>
+          <tr>
+            <th>Player</th>
+            <th>Economy points</th>
+            <th>Food</th>
+            <th>Wood</th>
+            <th>Stone</th>
+            <th>Nodes captured</th>
+            <th>Infrastructure 🏘️/🗼/🌾</th>
+            <th>Research F/W/S</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rankedPlayers.map((player) => (
+            <tr key={player.id}>
+              <td>
+                <span className="stats-player-dot" style={{ background: PLAYER_BADGE_COLORS[player.color] }} />
+                {player.name}
+              </td>
+              <td>{economyPoints(state, player)}</td>
+              <td>{player.resources.food}</td>
+              <td>{player.resources.wood}</td>
+              <td>{player.resources.stone}</td>
+              <td>{player.stats.nodesCaptured}</td>
+              <td>{player.stats.settlementsFounded}/{player.stats.towersBuilt}/{player.stats.economyBuilt}</td>
+              <td>{player.research.food}/{player.research.wood}/{player.research.stone}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h3>Resource ledger</h3>
+      <table className="stats-table">
+        <thead>
+          <tr>
+            <th>Player</th>
+            <th>Collected food</th>
+            <th>Collected wood</th>
+            <th>Collected stone</th>
+            <th>Total collected</th>
+            <th>Spent food</th>
+            <th>Spent wood</th>
+            <th>Spent stone</th>
+            <th>Total spent</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rankedPlayers.map((player) => (
+            <tr key={player.id}>
+              <td>
+                <span className="stats-player-dot" style={{ background: PLAYER_BADGE_COLORS[player.color] }} />
+                {player.name}
+              </td>
+              <td>{player.stats.incomeCollected.food}</td>
+              <td>{player.stats.incomeCollected.wood}</td>
+              <td>{player.stats.incomeCollected.stone}</td>
+              <td>{sumResources(player.stats.incomeCollected)}</td>
+              <td>{player.stats.resourcesSpent.food}</td>
+              <td>{player.stats.resourcesSpent.wood}</td>
+              <td>{player.stats.resourcesSpent.stone}</td>
+              <td>{sumResources(player.stats.resourcesSpent)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="hint">
+        Infrastructure is shown as settlements, towers and economy buildings. Research is shown by food, wood and stone level.
+      </p>
+    </>
+  );
+}
+
+function StatsBattlePage({
+  state,
+  rankedPlayers,
+}: {
+  state: GameState;
+  rankedPlayers: GameState['players'];
+}) {
+  const battleLog = state.actionLog.filter((entry) => /hit|shot|destroyed|area attack/i.test(entry));
+
+  return (
+    <>
+      <h3>Battle report</h3>
+      <table className="stats-table">
+        <thead>
+          <tr>
+            <th>Player</th>
+            <th>Status</th>
+            <th>Military points</th>
+            <th>Units built</th>
+            <th>Units lost</th>
+            <th>Units killed</th>
+            <th>Buildings razed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rankedPlayers.map((player) => (
+            <tr key={player.id}>
+              <td>
+                <span className="stats-player-dot" style={{ background: PLAYER_BADGE_COLORS[player.color] }} />
+                {player.name}
+              </td>
+              <td>{playerStatus(player)}</td>
+              <td>{militaryPoints(state, player)}</td>
+              <td>{player.stats.unitsBuilt}</td>
+              <td>{player.stats.unitsLost}</td>
+              <td>{player.stats.unitsKilled}</td>
+              <td>{player.stats.buildingsRazed}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <h3>Combat log</h3>
+      {battleLog.length === 0 ? (
+        <p className="hint">No combat has been recorded yet.</p>
+      ) : (
+        <div className="stats-battle-log">
+          {battleLog.map((entry, index) => <div key={`${index}-${entry}`}>{entry}</div>)}
+        </div>
+      )}
+    </>
   );
 }
 
